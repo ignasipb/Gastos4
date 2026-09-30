@@ -283,7 +283,7 @@ function vInicio(){
   const w=worth(),m=today().slice(0,7),f=flows(m),by={};
   S.tx.forEach(t=>{if(t.type==='expense'&&t.date.startsWith(m)){const c=topCat(t.categoryId);const k=c?lb(c):'Sin categoría';by[k]=(by[k]||0)-t.amount}});
   const top=Object.entries(by).sort((a,b)=>b[1]-a[1]).slice(0,6),mx=top[0]?.[1]||1;
-  const lb=S.meta.lastBackup,old=!lb||Date.now()-new Date(lb)>30*864e5;
+  const lastB=S.meta.lastBackup,old=!lastB||Date.now()-new Date(lastB)>30*864e5;
   if(!S.accounts.length)return '<div class="empty">Empieza creando tus cuentas en la pestaña Cuentas.</div>';
   return `${old&&S.tx.length?'<div class="warn">Haz una copia de seguridad: Ajustes → Exportar copia. Tus datos solo viven en este iPhone.</div>':''}
   <div class="sub">Patrimonio neto</div><div class="big">${eur(w.net)}</div>${delta(w)}
@@ -365,15 +365,19 @@ function settings(){
 /* ============ Render e inicio ============ */
 const T={i:['Inicio',vInicio],m:['Movimientos',vMov],c:['Cuentas',vCuentas],p:['Patrimonio',vPat],v:['Inversiones',vInv]};
 function render(){
-  const m=$('app'),sc=m.scrollTop;$('ttl').textContent=T[tab][0];m.innerHTML=T[tab][1]();
+  const m=$('app'),sc=m.scrollTop;$('ttl').textContent=T[tab][0];try{m.innerHTML=T[tab][1]()}catch(e){m.innerHTML='<div class="warn">Error al mostrar esta pantalla: '+esc(e.message)+'</div>'}
   $('nav').innerHTML=Object.entries(T).map(([k,v])=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v[0]}</button>`).join('');m.scrollTop=sc;
 }
 let hiddenAt=0;
 document.addEventListener('visibilitychange',()=>{if(document.hidden)hiddenAt=Date.now();else if(S.meta.pinHash&&Date.now()-hiddenAt>30000)showLock()});
 (function(){const c=document.createElement('canvas');c.width=c.height=180;const x=c.getContext('2d');x.fillStyle='#14161f';x.fillRect(0,0,180,180);x.fillStyle='#8fa3ff';x.beginPath();x.arc(90,90,58,0,7);x.fill();x.fillStyle='#14161f';x.font='bold 80px -apple-system,sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText('€',90,95);$('ico').href=c.toDataURL('image/png')})();
 (async()=>{
-  try{db=await openDB();for(const s of DATA)S[s]=await all(s);S.meta=(await all('meta'))[0]||S.meta}
-  catch(e){$('app').innerHTML='<div class="warn">No se puede usar el almacenamiento del navegador (¿modo privado?). Abre la app desde la pantalla de inicio.</div>';return}
+  const fail=e=>{$('nav').innerHTML='';$('app').innerHTML=`<div class="warn">No se pudo abrir el almacenamiento (${esc(e&&e.message||e)}). Cierra la app del todo y vuelve a abrirla. Si sigue igual, abre la dirección en Safari.<br><br><button class="b" onclick="location.reload()">Reintentar</button></div>`};
+  window.addEventListener('error',ev=>{if(!db)fail(ev.message)});
+  let err;
+  for(let i=0;i<3&&!db;i++){try{db=await Promise.race([openDB(),new Promise((_,j)=>setTimeout(()=>j(new Error('tiempo agotado')),4000))])}catch(e){err=e}}
+  if(!db)return fail(err);
+  try{for(const s of DATA)S[s]=await all(s);S.meta=(await all('meta'))[0]||S.meta}catch(e){return fail(e)}
   if(!S.cats.length)seedCats();
   if(S.meta.pinHash)showLock();
   snap();render();
