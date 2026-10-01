@@ -24,7 +24,8 @@ nav button{flex:1;background:none;border:0;color:var(--m);padding:15px 0;font-si
 nav button.on{color:var(--a)}
 .big{font-size:38px;font-weight:700;letter-spacing:-1px;margin:2px 0}
 .sub,.m{color:var(--m)}.sub{font-size:14px}
-.pos{color:var(--g)}.neg,.red{color:var(--r)}
+.pos,.li small.pos{color:var(--g)}.neg,.red,.li small.neg{color:var(--r)}
+.in{width:100%;background:var(--s);color:var(--t);border:1px solid var(--s2);border-radius:10px;padding:12px;font-size:16px;margin:8px 0}
 .card{background:var(--s);border-radius:14px;padding:4px 14px;margin:10px 0}
 .li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--s2)}
 .li:last-child{border:0}
@@ -72,9 +73,9 @@ const V=(d,n)=>d.querySelector('[name='+n+']').value;
 function toast(t){const d=document.createElement('div');d.className='toast';d.textContent=t;document.body.append(d);setTimeout(()=>d.remove(),3500)}
 
 /* ============ Almacenamiento (IndexedDB) ============ */
-const STORES=['accounts','tx','cats','snaps','inv','rules','meta'],DATA=['accounts','tx','cats','snaps','inv','rules'];
-let db,S={accounts:[],tx:[],cats:[],snaps:[],inv:[],rules:[],meta:{id:'m',schema:1}};
-const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open('finanzas',3);r.onupgradeneeded=()=>STORES.forEach(s=>{if(!r.result.objectStoreNames.contains(s))r.result.createObjectStore(s,{keyPath:'id'})});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const STORES=['accounts','tx','cats','snaps','inv','rules','rec','bud','meta'],DATA=['accounts','tx','cats','snaps','inv','rules','rec','bud'];
+let db,S={rec:[],bud:[],accounts:[],tx:[],cats:[],snaps:[],inv:[],rules:[],meta:{id:'m',schema:1}};
+const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open('finanzas',4);r.onupgradeneeded=()=>STORES.forEach(s=>{if(!r.result.objectStoreNames.contains(s))r.result.createObjectStore(s,{keyPath:'id'})});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const rq=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const st=(s,m)=>db.transaction(s,m).objectStore(s);
 const all=s=>rq(st(s,'readonly').getAll());
@@ -160,10 +161,10 @@ function vMov(){
     else if(t.type==='invest'){title=(t.amount<0?'Compra · ':'Venta · ')+esc(t.merchant);sub='Operación de inversión · '+esc(an(t.accountId));cls='m'}
     else if(t.type==='adjust'){title=esc(t.merchant||'Ajuste de saldo');sub='Ajuste · '+esc(an(t.accountId));cls='m'}
     else{title=esc(t.merchant||catName(t.categoryId));sub=cn(t.categoryId)+' · '+esc(an(t.accountId));cls=t.type==='income'?'pos':''}
-    return `<div class="li" onclick="${t.type==='invest'?"tab='v';render()":`txForm(S.tx.find(x=>x.id=='${t.id}'))`}"><div>${title}<small>${fd(t.date)} · ${sub}</small></div><div class="${cls}">${t.type==='income'?'+':''}${eur(amt)}</div></div>`};
+    return `<div class="li" data-s="${esc((title+' '+sub+' '+eur(amt)).toLowerCase())}" onclick="${t.type==='invest'?"tab='v';render()":`txForm(S.tx.find(x=>x.id=='${t.id}'))`}"><div>${title}<small>${fd(t.date)} · ${sub}</small></div><div class="${cls}">${t.type==='income'?'+':''}${eur(amt)}</div></div>`};
   return `${mnav()}<div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div><b>Neto</b></div><div class="${f.sav>=0?'pos':'neg'}"><b>${f.sav>=0?'+':''}${eur(f.sav)}</b></div></div></div>
   ${f.exp>0?`<h2>En qué se va el gasto</h2><div class="card" style="padding:12px 14px">${donut(spendBy(ym))}</div>`:''}
-  <div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button><button class="b2" onclick="$('csvf').click()">Importar CSV</button></div><h2>Movimientos</h2>
+  ${budCard(ym)}<div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button><button class="b2" onclick="recList()">Recurrentes</button></div><div class="acts" style="margin-top:0"><button class="b2" onclick="$('csvf').click()">Importar CSV</button></div><h2>Movimientos</h2><input class="in" placeholder="Buscar en el mes (comercio, categoría, importe…)" oninput="srch(this.value)">
   ${rows.length?`<div class="card">${rows.map(row).join('')}</div>`:'<div class="empty">Sin movimientos este mes.</div>'}
   <button class="fab" onclick="txForm()" aria-label="Añadir movimiento">+</button>`;
 }
@@ -287,6 +288,71 @@ function vInv(){
   <h2>Posiciones</h2><div class="card">${S.inv.map(row).join('')}</div>${opsCard()}`:'<div class="empty">Añade tus acciones, ETFs y fondos con su nº de participaciones y precio medio.</div>'}`;
 }
 
+/* ============ Fase 3: presupuestos, recurrentes, búsqueda ============ */
+const FQ={m:'Mensual',q:'Trimestral',y:'Anual',w:'Semanal'};
+const reopen=f=>{document.querySelectorAll('.ov').forEach(x=>x.remove());setTimeout(f,0)};
+const dayAdd=(d,k)=>{const x=new Date(d+'T12:00');x.setDate(x.getDate()+k);return x.toISOString().slice(0,10)};
+function srch(v){v=v.toLowerCase().trim();document.querySelectorAll('#app .li[data-s]').forEach(e=>e.style.display=!v||e.dataset.s.includes(v)?'':'none')}
+const bcol=p=>p>=1?'var(--r)':p>=.8?'#f2a541':'var(--a)';
+function budRows(m){const sp={};S.tx.forEach(t=>{if(t.type==='expense'&&t.date.startsWith(m)){const c=topCat(t.categoryId);if(c)sp[c.id]=(sp[c.id]||0)-t.amount}});
+  return S.bud.filter(b=>b.amount>0&&cat(b.id)).map(b=>({c:cat(b.id),lim:b.amount,sp:sp[b.id]||0,p:(sp[b.id]||0)/b.amount})).sort((a,b)=>b.p-a.p)}
+function budCard(m){
+  const rs=budRows(m);
+  return `<h2>Presupuestos</h2><div class="card">${rs.length?rs.map(x=>`<div class="li" style="display:block"><div style="display:flex;justify-content:space-between"><span>${esc(lb(x.c))}</span><span>${eur(x.sp)} / ${eur(x.lim)}</span></div><div class="bar"><i style="width:${Math.min(100,x.p*100)}%;background:${bcol(x.p)}"></i></div><small class="${x.p>=1?'neg':'m'}">${x.p>=1?'Te has pasado '+eur(x.sp-x.lim):'Quedan '+eur(x.lim-x.sp)} · ${pct(x.p)} usado</small></div>`).join(''):'<div class="empty" style="padding:12px 0">Define un límite mensual por categoría.</div>'}<div class="acts"><button class="b2" onclick="budgetForm()">Editar presupuestos</button></div></div>`}
+function budgetForm(){
+  const cs=S.cats.filter(c=>c.kind==='expense'&&!c.parentId),cur=id=>S.bud.find(b=>b.id===id)?.amount||0;
+  sheet('Presupuesto mensual',`<div class="sub">Límite por categoría (incluye sus subcategorías). Vacío = sin límite.</div>`+cs.map((c,i)=>`<label>${esc(lb(c))} (€/mes)<input name="b${i}" inputmode="decimal" value="${cur(c.id)?cur(c.id)/100:''}"></label>`).join(''),
+  d=>{cs.forEach((c,i)=>{const am=cents(V(d,'b'+i)),o=S.bud.find(b=>b.id===c.id);S.bud=S.bud.filter(x=>x!==o);
+    if(am>0){const b={id:c.id,amount:am};S.bud.push(b);P(put('bud',b))}else if(o)P(del('bud',c.id))})});
+}
+/* Fechas de vencimiento de un recurrente entre su inicio y 'to' */
+function occ(r,to){
+  const out=[],end=r.end&&r.end<to?r.end:to;
+  if(r.freq==='w'){let d=r.start;while(d<=end){out.push(d);d=dayAdd(d,7)}return out}
+  const step={m:1,q:3,y:12}[r.freq],[y0,m0]=r.start.split('-').map(Number),dd=+r.start.slice(8);
+  for(let k=0;k<2400;k+=step){const y=y0+Math.floor((m0-1+k)/12),m=(m0-1+k)%12+1,dim=new Date(y,m,0).getDate(),ds=`${y}-${String(m).padStart(2,'0')}-${String(Math.min(dd,dim)).padStart(2,'0')}`;if(ds>end)break;if(ds>=r.start)out.push(ds)}
+  return out}
+function recDue(){
+  const t=today(),from=dayAdd(t,-45),pend=[],next=[];
+  S.rec.forEach(r=>occ(r,dayAdd(t,30)).forEach(ds=>{if(ds<from)return;
+    if(ds<=t){if(!S.tx.some(x=>x.recId===r.id&&x.recDate===ds)&&!(r.skip||[]).includes(ds))pend.push({r,ds})}else next.push({r,ds})}));
+  const o=(a,b)=>a.ds<b.ds?-1:1;return{pend:pend.sort(o),next:next.sort(o)}}
+function recOk(id,ds){const r=S.rec.find(x=>x.id===id);if(!r||!acc(r.accountId))return toast('La cuenta ya no existe');
+  addTx({id:uid(),type:r.kind,accountId:r.accountId,amount:r.kind==='expense'?-r.amount:r.amount,date:ds,currency:'EUR',merchant:r.name,note:'',tags:[],recurring:true,recId:r.id,recDate:ds,categoryId:r.categoryId});commit()}
+function recSkip(id,ds){const r=S.rec.find(x=>x.id===id);if(!r)return;(r.skip=r.skip||[]).push(ds);P(put('rec',r));commit()}
+function alertsHtml(){
+  const{pend,next}=recDue(),al=budRows(today().slice(0,7)).filter(x=>x.p>=.8),bt='class="b2" style="padding:6px 10px;font-size:13px;flex:none"';let h='';
+  if(al.length)h+=`<div class="warn">${al.map(x=>`${x.p>=1?'🚨':'⚠️'} <b>${esc(lb(x.c))}</b>: ${eur(x.sp)} de ${eur(x.lim)} (${pct(x.p)})`).join('<br>')}</div>`;
+  if(pend.length)h+=`<h2>Pagos pendientes de confirmar</h2><div class="card">${pend.map(({r,ds})=>`<div class="li"><div>${esc(r.name)}<small>${fd(ds)}</small></div><div>${r.kind==='income'?'+':''}${eur(r.amount)}<br><button ${bt} onclick="recOk('${r.id}','${ds}')">Confirmar</button> <button ${bt} onclick="recSkip('${r.id}','${ds}')">Omitir</button></div></div>`).join('')}</div>`;
+  if(next.length)h+=`<h2>Próximos pagos (30 días)</h2><div class="card">${next.slice(0,6).map(({r,ds})=>`<div class="li"><div>${esc(r.name)}<small>${fd(ds)}</small></div><div>${r.kind==='income'?'+':'-'}${eur(r.amount)}</div></div>`).join('')}</div>`;
+  return h}
+function recForm(r){
+  if(!S.accounts.length)return toast('Crea primero una cuenta');
+  const n=!r;r=r||{name:'',kind:'expense',amount:'',freq:'m',start:today(),end:'',accountId:S.accounts[0].id,categoryId:null,skip:[]};
+  const d=sheet(n?'Nuevo recurrente':'Editar recurrente',`
+  <label>Nombre<input name="name" value="${esc(r.name)}" placeholder="Alquiler, Netflix…"></label>
+  <label>Tipo<select name="kind"><option value="expense" ${r.kind==='expense'?'selected':''}>Gasto</option><option value="income" ${r.kind==='income'?'selected':''}>Ingreso</option></select></label>
+  <label>Importe (€)<input name="amount" inputmode="decimal" value="${r.amount?r.amount/100:''}"></label>
+  <label>Frecuencia<select name="freq">${Object.entries(FQ).map(([k,v])=>`<option value="${k}" ${k===r.freq?'selected':''}>${v}</option>`).join('')}</select></label>
+  <label>Fecha del primer pago (de ahí sale el día de pago)<input type="date" name="start" value="${r.start}"></label>
+  <label>Fecha de fin (opcional)<input type="date" name="end" value="${r.end||''}"></label>
+  <label>Cuenta<select name="acc">${accOpts(r.accountId)}</select></label>
+  <label>Categoría<select name="cat"></select></label>`,
+  d=>{const nm=V(d,'name').trim(),am=cents(V(d,'amount'));if(!nm||am<=0){toast('Pon nombre e importe');return false}
+    Object.assign(r,{name:nm,kind:V(d,'kind'),amount:am,freq:V(d,'freq'),start:V(d,'start')||today(),end:V(d,'end')||'',accountId:V(d,'acc'),categoryId:V(d,'cat')||null});
+    if(n){r.id=uid();S.rec.push(r)}P(put('rec',r));reopen(recList)},
+  n?null:()=>{S.rec=S.rec.filter(x=>x!==r);P(del('rec',r.id));reopen(recList)});
+  const u=()=>{d.querySelector('[name=cat]').innerHTML=catOpts(V(d,'kind'),r.categoryId)};
+  d.querySelector('[name=kind]').onchange=u;u();
+}
+function recList(){
+  const mo=r=>r.amount*({m:1,q:1/3,y:1/12,w:52/12}[r.freq]),act=r=>!r.end||r.end>=today();
+  const te=S.rec.filter(r=>r.kind==='expense'&&act(r)).reduce((s,r)=>s+mo(r),0),ti=S.rec.filter(r=>r.kind==='income'&&act(r)).reduce((s,r)=>s+mo(r),0);
+  sheet('Recurrentes',`<div class="sub">Gastos fijos al mes (equivalente)</div><div class="big" style="font-size:30px">${eur(Math.round(te))}</div>${ti?`<div class="sub pos">Ingresos fijos al mes ${eur(Math.round(ti))}</div>`:''}
+  ${S.rec.length?`<div class="card">${S.rec.map(r=>`<div class="li" onclick="reopen(()=>recForm(S.rec.find(x=>x.id=='${r.id}')))"><div>${esc(r.name)}<small>${FQ[r.freq]} · día ${+r.start.slice(8)} · ${esc(an(r.accountId))}${act(r)?'':' · finalizado'}</small></div><div class="${r.kind==='income'?'pos':''}">${r.kind==='income'?'+':''}${eur(r.amount)}</div></div>`).join('')}</div>`:'<div class="empty">Añade alquiler, suscripciones, seguros…</div>'}
+  <button class="b" onclick="reopen(()=>recForm())">+ Nuevo recurrente</button><div class="sub" style="margin-top:10px">La app no cobra sola: al abrir Inicio verás los pagos vencidos para confirmarlos con un toque.</div>`);
+}
+
 /* ============ Cuentas ============ */
 function accForm(a){
   const n=!a,B=balMap();a=a||{name:'',entity:'',kind:'checking',opening:0,openingDate:today(),iban:'',notes:'',active:true,currency:'EUR'};
@@ -336,11 +402,11 @@ function vInicio(){
   S.tx.forEach(t=>{if(t.type==='expense'&&t.date.startsWith(m)){const c=topCat(t.categoryId);const k=c?lb(c):'Sin categoría';by[k]=(by[k]||0)-t.amount}});
   const top=Object.entries(by).sort((a,b)=>b[1]-a[1]).slice(0,6),mx=top[0]?.[1]||1;
   const lastB=S.meta.lastBackup,old=!lastB||Date.now()-new Date(lastB)>30*864e5;
-  if(!S.accounts.length)return '<div class="empty">Empieza creando tus cuentas en la pestaña Cuentas.</div>';
+  if(!S.accounts.length)return `<h2 style="font-size:22px">Bienvenido 👋</h2><div class="sub">Tres pasos para empezar. Todo se guarda solo en este iPhone.</div><div class="card"><div class="li"><div>1. Crea tus cuentas<small>Bancos, efectivo, broker, tarjetas</small></div></div><div class="li"><div>2. Registra gastos e ingresos<small>O importa el CSV de Revolut</small></div></div><div class="li"><div>3. Añade tus inversiones<small>Activos, compras y precio medio</small></div></div></div><button class="b" style="width:100%" onclick="tab='c';render()">Crear mi primera cuenta</button>`;
   return `${old&&S.tx.length?'<div class="warn">Haz una copia de seguridad: Ajustes → Exportar copia. Tus datos solo viven en este iPhone.</div>':''}
   <div class="sub">Patrimonio neto</div><div class="big">${eur(w.net)}</div>${delta(w)}
   ${dist(w)}${brk(w)}
-  <h2>${mLabel(m)}</h2><div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div>Ahorro</div><div>${eur(f.sav)}</div></div><div class="li"><div>Tasa de ahorro</div><div>${f.rate==null?'—':(f.rate*100).toFixed(1).replace('.',',')+' %'}</div></div></div>
+  ${alertsHtml()}<h2>${mLabel(m)}</h2><div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div>Ahorro</div><div>${eur(f.sav)}</div></div><div class="li"><div>Tasa de ahorro</div><div>${f.rate==null?'—':(f.rate*100).toFixed(1).replace('.',',')+' %'}</div></div></div>
   <div class="sub">Las transferencias y ajustes no cuentan como ingreso ni gasto.</div>
   ${top.length?`<h2>Gasto por categoría</h2><div class="card">${top.map(([k,v])=>`<div class="li" style="display:block"><div style="display:flex;justify-content:space-between"><span>${esc(k)}</span><span>${eur(v)}</span></div><div class="bar"><i style="width:${v/mx*100}%;background:var(--a)"></i></div></div>`).join('')}</div>`:''}
   <h2>Evolución del patrimonio</h2><div class="card" style="padding:12px 14px">${chart()}</div>`;
@@ -474,7 +540,7 @@ async function setPin(){
 function dl(name,type,text){const f=new File([text],name,{type});
   if(navigator.canShare&&navigator.canShare({files:[f]}))navigator.share({files:[f]}).catch(()=>{});
   else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;a.click()}}
-function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv,rules:S.rules}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
+function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv,rules:S.rules,rec:S.rec,bud:S.bud}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
 function expCSV(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const rows=[['fecha','cuenta','tipo','importe','categoria','comercio','descripcion'].join(';'),...[...S.tx].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,q(an(t.accountId)),t.type,(t.amount/100).toFixed(2).replace('.',','),q(t.categoryId?catName(t.categoryId):''),q(t.merchant),q(t.note)].join(';'))];
   dl('movimientos-'+today()+'.csv','text/csv','\ufeff'+rows.join('\n'))}
