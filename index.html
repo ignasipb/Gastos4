@@ -54,7 +54,7 @@ h2{font-size:16px;margin:20px 0 2px}
 </style></head><body>
 <header><h1 id="ttl"></h1><button onclick="settings()" aria-label="Ajustes">⚙</button></header>
 <main id="app"></main>
-<nav id="nav"></nav>
+<nav id="nav"></nav><input type="file" id="csvf" accept=".csv,.txt,text/csv" hidden onchange="impCSV(this)">
 <script>
 /* ============ Utilidades ============ */
 const $=id=>document.getElementById(id);
@@ -72,9 +72,9 @@ const V=(d,n)=>d.querySelector('[name='+n+']').value;
 function toast(t){const d=document.createElement('div');d.className='toast';d.textContent=t;document.body.append(d);setTimeout(()=>d.remove(),3500)}
 
 /* ============ Almacenamiento (IndexedDB) ============ */
-const STORES=['accounts','tx','cats','snaps','inv','meta'],DATA=['accounts','tx','cats','snaps','inv'];
-let db,S={accounts:[],tx:[],cats:[],snaps:[],inv:[],meta:{id:'m',schema:1}};
-const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open('finanzas',2);r.onupgradeneeded=()=>STORES.forEach(s=>{if(!r.result.objectStoreNames.contains(s))r.result.createObjectStore(s,{keyPath:'id'})});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const STORES=['accounts','tx','cats','snaps','inv','rules','meta'],DATA=['accounts','tx','cats','snaps','inv','rules'];
+let db,S={accounts:[],tx:[],cats:[],snaps:[],inv:[],rules:[],meta:{id:'m',schema:1}};
+const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open('finanzas',3);r.onupgradeneeded=()=>STORES.forEach(s=>{if(!r.result.objectStoreNames.contains(s))r.result.createObjectStore(s,{keyPath:'id'})});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const rq=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const st=(s,m)=>db.transaction(s,m).objectStore(s);
 const all=s=>rq(st(s,'readonly').getAll());
@@ -127,6 +127,7 @@ const mnav=()=>`<div class="mn"><button onclick="shiftM(-1)">‹</button><span>$
 
 /* ============ Movimientos ============ */
 function txForm(t){
+  if(t&&t.type==='invest')return toast('Las operaciones de inversión se gestionan en la pestaña Inversiones');
   if(!S.accounts.length)return toast('Crea primero una cuenta');
   const n=!t,old=n?[]:legs(t);let ty=n?'expense':t.type,from=n?S.accounts.find(a=>a.active).id:t.accountId,to='',amt=n?'':Math.abs(t.amount)/100;
   if(!n&&t.transferId){const o=old.find(x=>x.amount<0)||t,i=old.find(x=>x.amount>0)||t;from=o.accountId;to=i.accountId;amt=Math.abs(o.amount)/100}
@@ -156,12 +157,13 @@ function vMov(){
   const rows=S.tx.filter(t=>t.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date)).filter(t=>{if(!t.transferId)return true;if(seen.has(t.transferId))return false;seen.add(t.transferId);return true});
   const row=t=>{let title,sub,amt=t.amount,cls='';
     if(t.transferId){const L=legs(t),o=L.find(x=>x.amount<0)||t,i=L.find(x=>x.amount>0)||t;title=`${esc(an(o.accountId))} → ${esc(an(i.accountId))}`;sub='Transferencia';amt=Math.abs(t.amount);cls='m'}
+    else if(t.type==='invest'){title=(t.amount<0?'Compra · ':'Venta · ')+esc(t.merchant);sub='Operación de inversión · '+esc(an(t.accountId));cls='m'}
     else if(t.type==='adjust'){title=esc(t.merchant||'Ajuste de saldo');sub='Ajuste · '+esc(an(t.accountId));cls='m'}
     else{title=esc(t.merchant||catName(t.categoryId));sub=cn(t.categoryId)+' · '+esc(an(t.accountId));cls=t.type==='income'?'pos':''}
-    return `<div class="li" onclick="txForm(S.tx.find(x=>x.id=='${t.id}'))"><div>${title}<small>${fd(t.date)} · ${sub}</small></div><div class="${cls}">${t.type==='income'?'+':''}${eur(amt)}</div></div>`};
+    return `<div class="li" onclick="${t.type==='invest'?"tab='v';render()":`txForm(S.tx.find(x=>x.id=='${t.id}'))`}"><div>${title}<small>${fd(t.date)} · ${sub}</small></div><div class="${cls}">${t.type==='income'?'+':''}${eur(amt)}</div></div>`};
   return `${mnav()}<div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div><b>Neto</b></div><div class="${f.sav>=0?'pos':'neg'}"><b>${f.sav>=0?'+':''}${eur(f.sav)}</b></div></div></div>
   ${f.exp>0?`<h2>En qué se va el gasto</h2><div class="card" style="padding:12px 14px">${donut(spendBy(ym))}</div>`:''}
-  <div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button></div><h2>Movimientos</h2>
+  <div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button><button class="b2" onclick="$('csvf').click()">Importar CSV</button></div><h2>Movimientos</h2>
   ${rows.length?`<div class="card">${rows.map(row).join('')}</div>`:'<div class="empty">Sin movimientos este mes.</div>'}
   <button class="fab" onclick="txForm()" aria-label="Añadir movimiento">+</button>`;
 }
@@ -201,7 +203,7 @@ function payForm(){
 /* ============ Inversiones ============ */
 const IK={stock:'Acción',etf:'ETF',fund:'Fondo indexado',bond:'Bono',crypto:'Cripto',deposit:'Depósito',pension:'Plan de pensiones',other:'Otro'};
 const pv=p=>Math.round(p.units*p.price*100),pc=p=>Math.round(p.units*p.avg*100),invTotal=()=>S.inv.reduce((s,p)=>s+pv(p),0);
-const hist=p=>{const t=today();p.hist=(p.hist||[]).filter(h=>h.d!==t);p.hist.push({d:t,p:p.price,u:p.units});p.hist.sort((a,b)=>a.d<b.d?-1:1)};
+const hist=(p,t=today())=>{p.hist=(p.hist||[]).filter(h=>h.d!==t);p.hist.push({d:t,p:p.price,u:p.units});p.hist.sort((a,b)=>a.d<b.d?-1:1)};
 function invSeries(){const ds=[...new Set(S.inv.flatMap(p=>(p.hist||[]).map(h=>h.d)))].sort();return ds.map(d=>({id:d,net:S.inv.reduce((s,p)=>{const h=(p.hist||[]).filter(x=>x.d<=d).pop();return s+(h?Math.round(h.u*h.p*100):0)},0)}))}
 function invForm(p){
   const n=!p;p=p||{name:'',ticker:'',kind:'etf',broker:'',units:0,avg:0,price:0,hist:[]};
@@ -224,15 +226,65 @@ function pricesForm(){
   sheet('Actualizar precios (€ por participación)',S.inv.map((p,i)=>`<label>${esc(p.name)}<input name="p${i}" inputmode="decimal" value="${p.price||''}"></label>`).join(''),
   d=>{S.inv.forEach((p,i)=>{const v=flt(V(d,'p'+i));if(v>0&&v!==p.price){p.price=v;hist(p);P(put('inv',p))}})});
 }
+const OPK={buy:'Compra',sell:'Venta',div:'Dividendo'};
+/* Compra: nuevo precio medio ponderado (incluye comisiones). Venta: el precio medio no cambia. */
+function opForm(p0){
+  if(!S.inv.length)return toast('Añade primero un activo en + Activo');
+  const bk=S.accounts.find(a=>a.active&&a.kind==='broker')?.id;
+  const d=sheet('Nueva operación',`
+  <label>Activo<select name="p">${S.inv.map(x=>`<option value="${x.id}" ${p0&&x.id===p0.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></label>
+  <label>Operación<select name="k"><option value="buy">Compra</option><option value="sell">Venta</option><option value="div">Dividendo</option></select></label>
+  <label>Fecha<input type="date" name="date" value="${today()}"></label>
+  <div id="ou"><label>Nº de participaciones<input name="u" inputmode="decimal"></label>
+  <label>Precio por participación (€)<input name="pr" inputmode="decimal"></label>
+  <label>Comisiones (€)<input name="fee" inputmode="decimal"></label></div>
+  <label id="od" style="display:none">Importe del dividendo (€)<input name="dv" inputmode="decimal"></label>
+  <label>Cuenta del broker (efectivo)<select name="ac"><option value="">Sin cuenta (no mover efectivo)</option>${accOpts(bk)}</select></label>
+  <div class="warn" id="oi"></div>`,
+  d=>{const p=S.inv.find(x=>x.id===V(d,'p')),k=V(d,'k'),dt=V(d,'date'),ac=V(d,'ac'),un=flt(V(d,'u')),pr=flt(V(d,'pr')),fe=flt(V(d,'fee'));
+    if(!dt){toast('Falta la fecha');return false}
+    const lg={id:uid(),date:dt,kind:k,acc:ac,prev:{units:p.units,avg:p.avg,price:p.price}},b={date:dt,currency:'EUR',merchant:p.name,note:'',tags:[],recurring:false,invLog:lg.id};
+    if(k==='div'){const v=cents(V(d,'dv'));if(v<=0){toast('Pon el importe');return false}lg.amount=v;
+      if(ac)addTx({...b,id:uid(),type:'income',accountId:ac,amount:v,categoryId:S.cats.find(c=>c.name==='Dividendos'&&c.kind==='income')?.id||null})}
+    else{if(un<=0||pr<=0){toast('Pon participaciones y precio');return false}
+      if(k==='sell'&&un>p.units+1e-9){toast('No tienes tantas participaciones');return false}
+      const tot=Math.round((un*pr+(k==='buy'?fe:-fe))*100);Object.assign(lg,{units:un,price:pr,fees:fe,total:tot});
+      if(k==='buy'){p.avg=(p.units*p.avg+un*pr+fe)/(p.units+un);p.units+=un}
+      else{lg.realized=Math.round((un*(pr-p.avg)-fe)*100);p.units=Math.max(0,p.units-un)}
+      p.units=Math.round(p.units*1e10)/1e10;lg.avgAfter=p.avg;lg.unitsAfter=p.units;
+      const last=(p.hist||[]).at(-1)?.d||'';if(dt>=last){p.price=pr;hist(p,dt)}
+      if(ac)addTx({...b,id:uid(),type:'invest',accountId:ac,amount:k==='buy'?-tot:tot})}
+    (p.log=p.log||[]).push(lg);P(put('inv',p))});
+  const u=()=>{const p=S.inv.find(x=>x.id===V(d,'p')),k=V(d,'k'),un=flt(V(d,'u')),pr=flt(V(d,'pr')),fe=flt(V(d,'fee'));
+    d.querySelector('#ou').style.display=k==='div'?'none':'';d.querySelector('#od').style.display=k==='div'?'':'none';let t='';
+    if(k==='buy'&&un>0){const tot=un*pr+fe,nu=p.units+un;t=`Total ${eur(Math.round(tot*100))} · participaciones: ${num(nu)} · nuevo precio medio: ${num((p.units*p.avg+tot)/nu)} €`}
+    else if(k==='sell'&&un>0)t=`Cobras ${eur(Math.round((un*pr-fe)*100))} · plusvalía ${eur(Math.round((un*(pr-p.avg)-fe)*100))}`;
+    d.querySelector('#oi').textContent=t||'Rellena la operación para ver el precio medio resultante'};
+  d.oninput=u;d.onchange=u;u();
+}
+function undoOp(pid,lid){
+  const p=S.inv.find(x=>x.id===pid),l=p&&(p.log||[]).find(x=>x.id===lid);if(!l)return;
+  if(p.log.at(-1)!==l)return toast('Solo puedes deshacer la última operación de cada activo');
+  if(!confirm('¿Deshacer esta operación? Se revierte el efectivo del broker y el precio medio.'))return;
+  Object.assign(p,{units:l.prev.units,avg:l.prev.avg,price:l.prev.price});p.log.pop();
+  p.hist=(p.hist||[]).filter(h=>!(h.d===l.date&&h.u===l.unitsAfter&&h.p===l.price));
+  S.tx.filter(t=>t.invLog===l.id).forEach(rmTx);P(put('inv',p));commit();
+}
+function opsCard(){
+  const ops=S.inv.flatMap(p=>(p.log||[]).map(l=>({...l,p}))).sort((a,b)=>b.date.localeCompare(a.date));if(!ops.length)return'';
+  const sm=k=>ops.filter(o=>o.kind===k).reduce((s,o)=>s+(k==='div'?o.amount:o.total),0),re=ops.reduce((s,o)=>s+(o.realized||0),0);
+  return `<h2>Operaciones</h2><div class="card"><div class="li"><div>Total comprado</div><div>${eur(sm('buy'))}</div></div><div class="li"><div>Total vendido</div><div>${eur(sm('sell'))}</div></div><div class="li"><div>Dividendos cobrados</div><div>${eur(sm('div'))}</div></div><div class="li"><div>Plusvalía realizada</div><div class="${re>=0?'pos':'neg'}">${re>=0?'+':''}${eur(re)}</div></div></div>
+  <div class="card">${ops.slice(0,20).map(o=>`<div class="li" onclick="undoOp('${o.p.id}','${o.id}')"><div>${OPK[o.kind]} · ${esc(o.p.name)}<small>${fd(o.date)}${o.kind==='div'?'':` · ${num(o.units)} × ${num(o.price)} €${o.fees?' · comisión '+num(o.fees,2)+' €':''}${o.kind==='buy'?' · precio medio '+num(o.avgAfter)+' €':''}`}</small></div><div>${eur(o.kind==='div'?o.amount:o.total)}${o.kind==='sell'?`<small class="${o.realized>=0?'pos':'neg'}">${o.realized>=0?'+':''}${eur(o.realized)}</small>`:''}</div></div>`).join('')}</div><div class="sub">Toca una operación para deshacerla (solo la última de cada activo).</div>`;
+}
 function vInv(){
   const tv=invTotal(),tc=S.inv.reduce((s,p)=>s+pc(p),0),g=tv-tc;
-  const row=p=>{const v=pv(p),gp=v-pc(p);return `<div class="li" onclick="invForm(S.inv.find(x=>x.id=='${p.id}'))"><div>${esc(p.name)}<small>${num(p.units)} × ${num(p.price)} € · ${IK[p.kind]}${p.broker?' · '+esc(p.broker):''} · ${pct(tv?v/tv:0)}</small></div><div>${eur(v)}<small class="${gp>=0?'pos':'neg'}">${pc(p)?(gp>=0?'+':'')+eur(gp):''}</small></div></div>`};
+  const row=p=>{const v=pv(p),gp=v-pc(p);return `<div class="li" onclick="invForm(S.inv.find(x=>x.id=='${p.id}'))"><div>${esc(p.name)}<small>${num(p.units)} × ${num(p.price)} € · ${IK[p.kind]}${p.broker?' · '+esc(p.broker):''} · ${pct(tv?v/tv:0)}</small></div><div>${eur(v)}${pc(p)?`<small class="${gp>=0?'pos':'neg'}">${gp>=0?'+':''}${pct(gp/pc(p))} · ${gp>=0?'+':''}${eur(gp)}</small>`:''}</div></div>`};
   return `<div class="sub" style="margin-top:8px">Valor de la cartera</div><div class="big">${eur(tv)}</div>
   ${tc?`<div class="sub ${g>=0?'pos':'neg'}">${g>=0?'+':''}${eur(g)} (${pct(g/tc)}) sobre lo invertido</div>`:''}
-  <div class="acts"><button class="b" onclick="invForm()">+ Inversión</button><button class="b2" onclick="pricesForm()">Actualizar precios</button></div>
+  <div class="acts"><button class="b" onclick="opForm()">Compra / venta</button><button class="b2" onclick="invForm()">+ Activo</button></div><div class="acts" style="margin-top:0"><button class="b2" onclick="pricesForm()">Actualizar precios</button></div>
   ${S.inv.length?`<h2>Distribución de la cartera</h2><div class="card" style="padding:12px 14px">${donut(S.inv.map(p=>[esc(p.name),pv(p)]).sort((a,b)=>b[1]-a[1]))}</div>
   <h2>Evolución de la inversión total</h2><div class="card" style="padding:12px 14px">${chart(invSeries())}</div>
-  <h2>Posiciones</h2><div class="card">${S.inv.map(row).join('')}</div>`:'<div class="empty">Añade tus acciones, ETFs y fondos con su nº de participaciones y precio medio.</div>'}`;
+  <h2>Posiciones</h2><div class="card">${S.inv.map(row).join('')}</div>${opsCard()}`:'<div class="empty">Añade tus acciones, ETFs y fondos con su nº de participaciones y precio medio.</div>'}`;
 }
 
 /* ============ Cuentas ============ */
@@ -320,6 +372,88 @@ function catsList(){
   const d=sheet('Categorías',`<div class="card">${o.map(row).join('')}</div><button class="b" onclick="catForm()">+ Nueva categoría</button>`);
 }
 
+/* ============ Importación CSV y reglas ============ */
+const MES={Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
+const nk=d=>String(d).toUpperCase().replace(/[0-9*#]+/g,' ').replace(/\s+/g,' ').trim();
+function parseCSV(t){
+  const h=t.split('\n',5).join('\n'),sep=(h.match(/;/g)||[]).length>(h.match(/,/g)||[]).length?';':',',o=[];let r=[],c='',q=false;
+  for(let i=0;i<t.length;i++){const ch=t[i];
+    if(q){if(ch==='"'){if(t[i+1]==='"'){c+='"';i++}else q=false}else c+=ch}
+    else if(ch==='"')q=true;else if(ch===sep){r.push(c);c=''}
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(c);o.push(r);r=[];c=''}else c+=ch}
+  if(c||r.length){r.push(c);o.push(r)}return o}
+function pdate(s,mf){s=String(s||'').trim();let m;
+  if(m=s.match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/))return`${m[3]}-${String(MES[m[1]]).padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+  if(m=s.match(/^(\d{4})-(\d{2})-(\d{2})/))return m[0].slice(0,10);
+  if(m=s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})/)){const[dd,mm]=mf?[m[2],m[1]]:[m[1],m[2]],y=m[3].length==2?'20'+m[3]:m[3];return`${y}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`}
+  return null}
+function pamt(s){s=String(s||'').replace(/[^\d.,-]/g,'');if(!/\d/.test(s))return null;const neg=s.includes('-');s=s.replace(/-/g,'');
+  const lc=s.lastIndexOf(','),ld=s.lastIndexOf('.'),p=Math.max(lc,ld);
+  if(p>=0&&(s.length-p-1!==3||(lc>=0&&ld>=0)))s=s.slice(0,p).replace(/[.,]/g,'')+'.'+s.slice(p+1);else s=s.replace(/[.,]/g,'');
+  return Math.round(parseFloat(s)*100)*(neg?-1:1)}
+/* Extracto consolidado de Revolut: cuenta EUR + intereses de ahorro (sumados por mes) */
+function revolut(Rw){
+  const out=[],iv={};let sec='',mode=null,skip=0;
+  Rw.forEach(r=>{const k=r.filter(c=>c.trim()),c0=(r[0]||'').trim();
+    if(c0==='Date'&&r[1]==='Description'){mode=r[2]==='Category'?'cur':r[2]==='AER'?'sav':null;return}
+    if(!c0||c0==='Total'||c0[0]==='-'){mode=null;return}
+    if(k.length===1&&!mode){if(!/^Transaction/.test(c0))sec=c0;return}
+    if(mode==='cur'){const date=pdate(c0),amt=pamt(r[3]);if(!date||amt==null)return;if(!/\(EUR\)/.test(sec)){skip++;return}if(amt)out.push({date,desc:r[1],amt,acc:'main'})}
+    if(mode==='sav'){const date=pdate(c0,true),amt=pamt(r[8]);if(date&&amt){const m=date.slice(0,7);iv[m]=iv[m]||{date,amt:0};iv[m].amt+=amt;if(date>iv[m].date)iv[m].date=date}}});
+  Object.entries(iv).forEach(([m,v])=>out.push({date:v.date,desc:'Intereses netos Revolut '+m,amt:v.amt,acc:'sav',pre:1}));
+  if(skip)toast(skip+' movimientos en otras divisas omitidos');
+  return out.sort((a,b)=>a.date<b.date?-1:1)}
+const setRule=(key,act,v)=>{const o=S.rules.find(r=>r.key===key),r={id:o?o.id:uid(),key,act,v:v||''};S.rules=S.rules.filter(x=>x!==o);S.rules.push(r);P(put('rules',r))};
+function rowOpts(r,sel){const k=r.amt<0?'expense':'income',c=sel.startsWith('c:')?sel.slice(2):null;
+  return `<option value="skip" ${sel==='skip'?'selected':''}>⏭ Omitir</option><optgroup label="Categoría">${catOpts(k,c).replace(/value="/g,'value="c:')}</optgroup><optgroup label="Traspaso ${r.amt<0?'a':'desde'} la cuenta">${S.accounts.map(a=>`<option value="t:${a.id}" ${sel==='t:'+a.id?'selected':''}>${esc(a.name)}</option>`).join('')}</optgroup>`}
+function showPreview(rows,rev){
+  if(!rows.length)return toast('No se encontraron movimientos');
+  if(!S.accounts.length)return toast('Crea primero una cuenta');
+  const hs=new Set(S.tx.map(t=>t.importHash).filter(Boolean).map(h=>h.slice(h.indexOf('|')+1))),cnt={},rls=[...S.rules].sort((a,b)=>b.key.length-a.key.length);
+  const cid=(n,k)=>S.cats.find(c=>c.name===n&&c.kind===k)?.id,dO=cid('Otros','expense'),dI=cid('Otros ingresos','income'),dT=cid('Intereses','income')||dI;let dup=0;
+  rows.forEach(r=>{const k=r.date+'|'+r.amt+'|'+nk(r.desc);cnt[k]=(cnt[k]||0)+1;r.h=k+'#'+cnt[k];
+    const ru=rls.find(x=>x.key&&nk(r.desc).includes(x.key));
+    r.sel=r.pre?'c:'+dT:ru?(ru.act==='skip'?'skip':ru.act+':'+ru.v):'c:'+(r.amt<0?dO:dI);
+    if(hs.has(r.h)){dup++;r.dup=1;r.sel0=r.sel;r.sel='skip'}});
+  const keep=!S.tx.some(t=>t.accountId===S.accounts[0].id);
+  sheet('Vista previa de la importación',`<div class="sub">${rows.length} movimientos${dup?` · ${dup} ya importados (omitidos)`:''}. Revisa la columna de destino de cada uno.</div>
+  <label>Importar en la cuenta<select name="acc">${accOpts()}</select></label>
+  ${rev?`<label>Cuenta de ahorro de Revolut (para los intereses y traspasos)<select name="sav"><option value="">— ninguna: omitir intereses</option>${accOpts()}</select></label>`:''}
+  <label><input type="checkbox" name="keep" ${keep?'checked':''}> Estos movimientos ya están incluidos en el saldo actual de la cuenta</label>
+  <label><input type="checkbox" name="learn" checked> Recordar mis cambios como reglas</label>
+  <div class="card">${rows.map((r,i)=>`<div class="li" style="display:block"><div style="display:flex;justify-content:space-between;gap:8px"><span>${esc(r.desc)}</span><span class="${r.amt>0?'pos':''}">${eur(r.amt)}</span></div><small class="m">${fd(r.date)}${r.dup?' · ya importado':''}</small><select name="r${i}" style="width:100%;margin-top:6px">${rowOpts(r,r.sel)}</select></div>`).join('')}</div>`,
+  d=>{const ac=V(d,'acc'),sv=rev?V(d,'sav'):'',kp=d.querySelector('[name=keep]').checked,ln=d.querySelector('[name=learn]').checked;
+    const have=new Set(S.tx.map(t=>t.importHash).filter(Boolean)),add=[],nr=[];let nd=0;
+    rows.forEach((r,i)=>{const ch=V(d,'r'+i);if(ch==='skip')return;const a=r.acc==='sav'?sv:ac;if(!a)return;
+      const h=a+'|'+r.h;if(have.has(h)){nd++;return}
+      const[k,v]=ch.split(':'),b={date:r.date,currency:'EUR',merchant:r.desc.slice(0,60),note:'',tags:[],recurring:false};
+      if(k==='t'){if(v===a)return;const tid=uid();add.push({...b,id:uid(),type:'transfer',accountId:a,amount:r.amt,transferId:tid,importHash:h},{...b,merchant:'',id:uid(),type:'transfer',accountId:v,amount:-r.amt,transferId:tid})}
+      else add.push({...b,id:uid(),type:r.amt<0?'expense':'income',accountId:a,amount:r.amt,categoryId:v,importHash:h});
+      const key=nk(r.desc).slice(0,24);if(ln&&!r.pre&&ch!==(r.dup?r.sel0:r.sel)&&key.length>=3)nr.push([key,k,v])});
+    if(!add.length){toast(nd?nd+' duplicados omitidos':'Nada que importar');return false}
+    add.forEach(addTx);nr.forEach(x=>setRule(...x));
+    if(kp){const dl={};add.forEach(x=>dl[x.accountId]=(dl[x.accountId]||0)+x.amount);Object.entries(dl).forEach(([id,v])=>{const a=acc(id);if(a){a.opening-=v;P(put('accounts',a))}})}
+    toast(add.filter(x=>x.importHash).length+' movimientos importados'+(nd?`, ${nd} duplicados omitidos`:'')+(nr.length?`, ${nr.length} reglas nuevas`:''))});
+}
+function mapForm(Rw){
+  const h=Rw.findIndex(r=>r.filter(c=>c.trim()).length>=3);if(h<0)return toast('No reconozco el formato');
+  const H=Rw[h],o=n=>H.map((c,i)=>`<option value="${i}" ${i===n?'selected':''}>${esc(c||'Columna '+(i+1))}</option>`).join(''),g=re=>{const i=H.findIndex(c=>re.test(c));return i<0?0:i};
+  sheet('Columnas del archivo',`<div class="sub">Indica qué columna es cada dato. El importe debe llevar signo (negativo = gasto).</div><label>Fecha<select name="d">${o(g(/fecha|date/i))}</select></label><label>Descripción<select name="s">${o(g(/concepto|descrip|detalle|movimiento|description/i))}</select></label><label>Importe<select name="a">${o(g(/importe|amount|cantidad/i))}</select></label>`,
+  d=>{const[i,j,k]=['d','s','a'].map(n=>+V(d,n)),rows=[];
+    Rw.slice(h+1).forEach(r=>{const date=pdate(r[i]),amt=pamt(r[k]);if(date&&amt)rows.push({date,desc:(r[j]||'').trim(),amt,acc:'main'})});
+    showPreview(rows,false)});
+}
+async function impCSV(el){const f=el.files[0];if(!f)return;const b=await f.arrayBuffer();let t=new TextDecoder('utf-8').decode(b);if(t.includes('\ufffd'))t=new TextDecoder('windows-1252').decode(b);el.value='';
+  const Rw=parseCSV(t.replace(/^\ufeff/,''));if(Rw.some(r=>r[0]==='Transaction statement'))showPreview(revolut(Rw),true);else mapForm(Rw)}
+function ruleForm(){
+  sheet('Nueva regla',`<label>Si la descripción contiene<input name="key" placeholder="MERCADONA"></label><label>Entonces<select name="ch"><option value="skip">Omitir</option><optgroup label="Gasto">${catOpts('expense').replace(/value="/g,'value="c:')}</optgroup><optgroup label="Ingreso">${catOpts('income').replace(/value="/g,'value="c:')}</optgroup><optgroup label="Traspaso a/desde la cuenta">${S.accounts.map(a=>`<option value="t:${a.id}">${esc(a.name)}</option>`).join('')}</optgroup></select></label>`,
+  d=>{const key=nk(V(d,'key'));if(key.length<3){toast('Escribe al menos 3 letras');return false}const[k,v]=V(d,'ch').split(':');setRule(key,k,v)});
+}
+function delRule(id){if(confirm('¿Eliminar la regla?')){S.rules=S.rules.filter(r=>r.id!==id);P(del('rules',id));document.querySelectorAll('.ov').forEach(x=>x.remove());rulesList()}}
+function rulesList(){
+  sheet('Reglas de importación',`<div class="sub">Si la descripción de un movimiento contiene el texto, se asigna solo al importar. Toca una regla para eliminarla.</div>${S.rules.length?`<div class="card">${S.rules.map(r=>`<div class="li" onclick="delRule('${r.id}')"><div>${esc(r.key)}<small>${r.act==='skip'?'Omitir':r.act==='t'?'Traspaso: '+esc(an(r.v)):cn(r.v)}</small></div><div class="m">✕</div></div>`).join('')}</div>`:'<div class="empty">Aún no hay reglas. Se crean solas al importar.</div>'}<button class="b" onclick="ruleForm()">+ Nueva regla</button>`);
+}
+
 /* ============ Seguridad, copias y ajustes ============ */
 const hash=async(pin,salt)=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+pin)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 function showLock(){
@@ -340,7 +474,7 @@ async function setPin(){
 function dl(name,type,text){const f=new File([text],name,{type});
   if(navigator.canShare&&navigator.canShare({files:[f]}))navigator.share({files:[f]}).catch(()=>{});
   else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;a.click()}}
-function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
+function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv,rules:S.rules}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
 function expCSV(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const rows=[['fecha','cuenta','tipo','importe','categoria','comercio','descripcion'].join(';'),...[...S.tx].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,q(an(t.accountId)),t.type,(t.amount/100).toFixed(2).replace('.',','),q(t.categoryId?catName(t.categoryId):''),q(t.merchant),q(t.note)].join(';'))];
   dl('movimientos-'+today()+'.csv','text/csv','\ufeff'+rows.join('\n'))}
@@ -353,6 +487,7 @@ async function wipe(){if(!confirm('¿Borrar TODOS los datos de este dispositivo?
 function settings(){
   sheet('Ajustes',`<div class="acts" style="flex-direction:column">
   <button class="b2" onclick="catsList()">Categorías</button>
+  <button class="b2" onclick="rulesList()">Reglas de importación</button>
   <button class="b2" onclick="setPin()">Código de acceso ${S.meta.pinHash?'(activo)':''}</button>
   <button class="b2" onclick="expJSON()">Exportar copia (JSON)</button>
   <button class="b2" onclick="$('f').click()">Restaurar copia</button>
