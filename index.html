@@ -153,7 +153,7 @@ function txForm(t){
   const upd=()=>{const y=V(d,'type');d.querySelector('#to').style.display=y==='transfer'?'':'none';d.querySelector('#cg').style.display=y==='expense'||y==='income'?'':'none';d.querySelector('#fl').firstChild.textContent=y==='transfer'?'Desde':'Cuenta';d.querySelector('[name=cat]').innerHTML=catOpts(y==='income'?'income':'expense',!n&&t.categoryId)};
   d.querySelector('[name=type]').onchange=upd;upd();
 }
-function vMov(){
+function vMov0(){
   const f=flows(ym),seen=new Set();
   const rows=S.tx.filter(t=>t.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date)).filter(t=>{if(!t.transferId)return true;if(seen.has(t.transferId))return false;seen.add(t.transferId);return true});
   const row=t=>{let title,sub,amt=t.amount,cls='';
@@ -164,7 +164,7 @@ function vMov(){
     return `<div class="li" data-s="${esc((title+' '+sub+' '+eur(amt)).toLowerCase())}" onclick="${t.type==='invest'?"tab='v';render()":`txForm(S.tx.find(x=>x.id=='${t.id}'))`}"><div>${title}<small>${fd(t.date)} · ${sub}</small></div><div class="${cls}">${t.type==='income'?'+':''}${eur(amt)}</div></div>`};
   return `${mnav()}<div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div><b>Neto</b></div><div class="${f.sav>=0?'pos':'neg'}"><b>${f.sav>=0?'+':''}${eur(f.sav)}</b></div></div></div>
   ${f.exp>0?`<h2>En qué se va el gasto</h2><div class="card" style="padding:12px 14px">${donut(spendBy(ym))}</div>`:''}
-  ${budCard(ym)}<div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button><button class="b2" onclick="recList()">Recurrentes</button></div><div class="acts" style="margin-top:0"><button class="b2" onclick="$('csvf').click()">Importar CSV</button></div><h2>Movimientos</h2><input class="in" placeholder="Buscar en el mes (comercio, categoría, importe…)" oninput="srch(this.value)">
+  <div class="acts"><button class="b2" onclick="payForm()">Reparto de nómina</button><button class="b2" onclick="$('csvf').click()">Importar CSV</button></div><h2>Movimientos</h2><input class="in" placeholder="Buscar en el mes (comercio, categoría, importe…)" oninput="srch(this.value)">
   ${rows.length?`<div class="card">${rows.map(row).join('')}</div>`:'<div class="empty">Sin movimientos este mes.</div>'}
   <button class="fab" onclick="txForm()" aria-label="Añadir movimiento">+</button>`;
 }
@@ -180,11 +180,11 @@ function donut(items){
 function spendBy(m){const by={};S.tx.forEach(t=>{if(t.type==='expense'&&t.date.startsWith(m)){const c=topCat(t.categoryId),k=c?lb(c):'Sin categoría';by[k]=(by[k]||0)-t.amount}});return Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([k,v])=>[esc(k),v])}
 
 /* ============ Reparto de nómina ============ */
-const xfer=(f,t,a,dt,note)=>{const id=uid(),b={date:dt,currency:'EUR',merchant:'',note,tags:[],recurring:false,type:'transfer',transferId:id};addTx({...b,id:uid(),accountId:f,amount:-a});addTx({...b,id:uid(),accountId:t,amount:a})};
+const xfer=(f,t,a,dt,note,pr)=>{const id=uid(),b={date:dt,currency:'EUR',merchant:'',note,tags:[],recurring:false,type:'transfer',transferId:id,payroll:pr};addTx({...b,id:uid(),accountId:f,amount:-a});addTx({...b,id:uid(),accountId:t,amount:a})};
 function payForm(){
   if(S.accounts.filter(a=>a.active).length<2)return toast('Necesitas al menos 2 cuentas activas');
-  const pl=S.meta.plan||{},inc=flows(ym).inc;
-  const d=sheet('Reparto de nómina',`<div class="sub">Crea transferencias (no cuentan como gasto) desde la cuenta donde cobras. Pulsa Guardar una sola vez por mes.</div>
+  const pl=S.meta.plan||{},inc=flows(ym).inc,dn=S.tx.filter(t=>t.payroll===ym&&t.amount>0);
+  const d=sheet('Reparto de nómina',`<div class="sub">Crea transferencias (no cuentan como gasto) desde la cuenta donde cobras. Pulsa Guardar una sola vez por mes.</div>${dn.length?`<div class="warn">Este mes ya hay un reparto (${dn.length} traspasos, ${eur(dn.reduce((s,t)=>s+t.amount,0))}). Si guardas se creará otro; <b>Eliminar</b> deshace el anterior.</div>`:''}
   <label>Nómina a repartir (€)<input name="tot" inputmode="decimal" value="${inc?inc/100:''}"></label>
   <label>Cuenta donde cobras<select name="src">${accOpts(pl.src)}</select></label>
   <label>Enviar a otra cuenta<select name="a1">${accOpts(pl.a1)}</select></label>
@@ -195,8 +195,9 @@ function payForm(){
   d=>{const src=V(d,'src'),dt=today().startsWith(ym)?today():ym+'-01',q={src,a1:V(d,'a1'),m1:cents(V(d,'m1')),a2:V(d,'a2'),m2:cents(V(d,'m2'))};
     if(!q.m1&&!q.m2){toast('Pon algún importe');return false}
     if((q.m1&&q.a1===src)||(q.m2&&q.a2===src)){toast('El destino debe ser otra cuenta');return false}
-    if(q.m1)xfer(src,q.a1,q.m1,dt,'Reparto nómina');if(q.m2)xfer(src,q.a2,q.m2,dt,'Reparto nómina');
-    S.meta.plan=q;saveMeta()});
+    if(dn.length&&!confirm('Ya hiciste un reparto este mes. ¿Crear otro?'))return false;
+    if(q.m1)xfer(src,q.a1,q.m1,dt,'Reparto nómina',ym);if(q.m2)xfer(src,q.a2,q.m2,dt,'Reparto nómina',ym);
+    S.meta.plan=q;saveMeta()},dn.length?()=>{S.tx.filter(t=>t.payroll===ym).forEach(rmTx)}:null);
   const u=()=>{const t=cents(V(d,'tot'));d.querySelector('#rest').textContent=t?'Te quedan para gastar: '+eur(t-cents(V(d,'m1'))-cents(V(d,'m2'))):'Indica la nómina para ver cuánto te queda'};
   d.oninput=u;u();
 }
@@ -361,18 +362,23 @@ function recForm(r){
   <label>Categoría<select name="cat"></select></label>`,
   d=>{const nm=V(d,'name').trim(),am=cents(V(d,'amount'));if(!nm||am<=0){toast('Pon nombre e importe');return false}
     Object.assign(r,{name:nm,kind:V(d,'kind'),amount:am,freq:V(d,'freq'),start:V(d,'start')||today(),end:V(d,'end')||'',accountId:V(d,'acc'),categoryId:V(d,'cat')||null});
-    if(n){r.id=uid();S.rec.push(r)}P(put('rec',r));reopen(recList)},
-  n?null:()=>{S.rec=S.rec.filter(x=>x!==r);P(del('rec',r.id));reopen(recList)});
+    if(n){r.id=uid();S.rec.push(r)}P(put('rec',r))},
+  n?null:()=>{S.rec=S.rec.filter(x=>x!==r);P(del('rec',r.id))});
   const u=()=>{d.querySelector('[name=cat]').innerHTML=catOpts(V(d,'kind'),r.categoryId)};
   d.querySelector('[name=kind]').onchange=u;u();
 }
-function recList(){
+function vRec(){
   const mo=r=>r.amount*({m:1,q:1/3,y:1/12,w:52/12}[r.freq]),act=r=>!r.end||r.end>=today();
   const te=S.rec.filter(r=>r.kind==='expense'&&act(r)).reduce((s,r)=>s+mo(r),0),ti=S.rec.filter(r=>r.kind==='income'&&act(r)).reduce((s,r)=>s+mo(r),0);
-  sheet('Recurrentes',`<div class="sub">Gastos fijos al mes (equivalente)</div><div class="big" style="font-size:30px">${eur(Math.round(te))}</div>${ti?`<div class="sub pos">Ingresos fijos al mes ${eur(Math.round(ti))}</div>`:''}
-  ${S.rec.length?`<div class="card">${S.rec.map(r=>`<div class="li" onclick="reopen(()=>recForm(S.rec.find(x=>x.id=='${r.id}')))"><div>${esc(r.name)}<small>${FQ[r.freq]} · día ${+r.start.slice(8)} · ${esc(an(r.accountId))}${act(r)?'':' · finalizado'}</small></div><div class="${r.kind==='income'?'pos':''}">${r.kind==='income'?'+':''}${eur(r.amount)}</div></div>`).join('')}</div>`:'<div class="empty">Añade alquiler, suscripciones, seguros…</div>'}
-  <button class="b" onclick="reopen(()=>recForm())">+ Nuevo recurrente</button><div class="sub" style="margin-top:10px">La app no cobra sola: al abrir Inicio verás los pagos vencidos para confirmarlos con un toque.</div>`);
+  return `<div class="sub">Gastos fijos al mes (equivalente)</div><div class="big" style="font-size:30px">${eur(Math.round(te))}</div>${ti?`<div class="sub pos">Ingresos fijos al mes ${eur(Math.round(ti))}</div>`:''}
+  ${S.rec.length?`<div class="card">${S.rec.map(r=>`<div class="li" onclick="recForm(S.rec.find(x=>x.id=='${r.id}'))"><div>${esc(r.name)}<small>${FQ[r.freq]} · día ${+r.start.slice(8)} · ${esc(an(r.accountId))}${act(r)?'':' · finalizado'}</small></div><div class="${r.kind==='income'?'pos':''}">${r.kind==='income'?'+':''}${eur(r.amount)}</div></div>`).join('')}</div>`:'<div class="empty">Añade alquiler, suscripciones, seguros…</div>'}
+  <button class="b" onclick="recForm()">+ Nuevo recurrente</button><div class="sub" style="margin-top:10px">La app no cobra sola: al abrir Inicio verás los pagos vencidos para confirmarlos con un toque.</div>`;
 }
+
+let msub='m';
+const segTabs=()=>`<div class="acts" style="margin:4px 0 0">${[['m','Movimientos'],['p','Presupuestos'],['r','Recurrentes']].map(([k,l])=>`<button class="b2" style="padding:10px 4px;font-size:13px;${k===msub?'background:var(--a);color:var(--on)':''}" onclick="msub='${k}';render()">${l}</button>`).join('')}</div>`;
+const vPres=()=>`${mnav()}${budCard(ym)}<div class="sub">El límite de cada categoría incluye sus subcategorías. Los avisos del 80 % y del 100 % salen en Inicio.</div>`;
+function vMov(){return segTabs()+(msub==='p'?vPres():msub==='r'?vRec():vMov0())}
 
 /* ============ Cuentas ============ */
 function accForm(a){
@@ -572,16 +578,12 @@ function imp(el){const r=new FileReader();r.onload=async()=>{try{const j=JSON.pa
 async function wipe(){if(!confirm('¿Borrar TODOS los datos de este dispositivo? No se puede deshacer.')||!confirm('Última confirmación: se borrará todo.'))return;
   for(const s of STORES)await clr(s);location.reload()}
 function settings(){
-  sheet('Ajustes',`<div class="acts" style="flex-direction:column">
-  <button class="b2" onclick="catsList()">Categorías</button>
-  <button class="b2" onclick="rulesList()">Reglas de importación</button>
-  <button class="b2" onclick="setPin()">Código de acceso ${S.meta.pinHash?'(activo)':''}</button>
-  <button class="b2" onclick="expJSON()">Exportar copia (JSON)</button>
-  <button class="b2" onclick="$('f').click()">Restaurar copia</button>
-  <button class="b2" onclick="expCSV()">Exportar movimientos (CSV)</button>
-  <button class="b2 red" onclick="wipe()">Borrar todos los datos</button></div>
-  <input type="file" id="f" accept=".json" hidden onchange="imp(this)">
-  <div class="sub">Los datos se guardan solo en este dispositivo. El código bloquea la pantalla pero no cifra los datos.</div>`);
+  const ub=S.meta.lastBackup?new Date(S.meta.lastBackup).toLocaleDateString('es-ES'):'nunca';
+  sheet('Ajustes',`<h2 style="margin-top:4px">Datos</h2><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="catsList()">Categorías</button><button class="b2" onclick="rulesList()">Reglas de importación</button></div>
+  <h2>Copia de seguridad</h2><div class="sub">Última copia: ${ub}</div><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="expJSON()">Exportar copia (JSON)</button><button class="b2" onclick="$('f').click()">Restaurar copia</button><button class="b2" onclick="expCSV()">Exportar movimientos (CSV)</button></div>
+  <h2>Seguridad</h2><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="setPin()">Código de acceso ${S.meta.pinHash?'(activo)':'(sin activar)'}</button></div><div class="sub">El código bloquea la pantalla pero no cifra los datos.</div>
+  <h2>Zona peligrosa</h2><div class="acts" style="margin-top:6px"><button class="b2 red" onclick="wipe()">Borrar todos los datos</button></div>
+  <input type="file" id="f" accept=".json" hidden onchange="imp(this)">`);
 }
 
 /* ============ Render e inicio ============ */
