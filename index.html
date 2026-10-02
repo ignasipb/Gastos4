@@ -203,29 +203,50 @@ function payForm(){
 
 /* ============ Inversiones ============ */
 const IK={stock:'Acción',etf:'ETF',fund:'Fondo indexado',bond:'Bono',crypto:'Cripto',deposit:'Depósito',pension:'Plan de pensiones',other:'Otro'};
-const pv=p=>Math.round(p.units*p.price*100),pc=p=>Math.round(p.units*p.avg*100),invTotal=()=>S.inv.reduce((s,p)=>s+pv(p),0);
+const FXC=['EUR','USD','CAD','GBP','CHF'];
+const fxr=c=>!c||c==='EUR'?1:((S.meta.fx||{})[c]||1);
+const toE=(p,x)=>x/fxr(p.cur);
+const setFx=(c,r)=>{S.meta.fx={...(S.meta.fx||{}),[c]:r};saveMeta()};
+const fxWarn=()=>{const u=[...new Set(S.inv.map(p=>p.cur).filter(c=>c&&c!=='EUR'))],m=u.filter(c=>!(S.meta.fx||{})[c]);return (m.length?`<div class="warn">Falta el tipo de cambio de ${m.join(', ')}: indícalo en Precios. Mientras tanto se cuenta 1 a 1.</div>`:'')+(u.length?`<div class="sub">Tipos de cambio: ${u.map(c=>'1 € = '+num((S.meta.fx||{})[c]||1)+' '+c).join(' · ')}</div>`:'')};
+const pv=p=>Math.round(toE(p,p.units*p.price)*100),pc=p=>Math.round(toE(p,p.units*p.avg)*100),invTotal=()=>S.inv.reduce((s,p)=>s+pv(p),0);
 const hist=(p,t=today())=>{p.hist=(p.hist||[]).filter(h=>h.d!==t);p.hist.push({d:t,p:p.price,u:p.units});p.hist.sort((a,b)=>a.d<b.d?-1:1)};
-function invSeries(){const ds=[...new Set(S.inv.flatMap(p=>(p.hist||[]).map(h=>h.d)))].sort();return ds.map(d=>({id:d,net:S.inv.reduce((s,p)=>{const h=(p.hist||[]).filter(x=>x.d<=d).pop();return s+(h?Math.round(h.u*h.p*100):0)},0)}))}
+function invSeries(){const ds=[...new Set(S.inv.flatMap(p=>(p.hist||[]).map(h=>h.d)))].sort();return ds.map(d=>({id:d,net:S.inv.reduce((s,p)=>{const h=(p.hist||[]).filter(x=>x.d<=d).pop();return s+(h?Math.round(toE(p,h.u*h.p)*100):0)},0)}))}
 function invForm(p){
   const n=!p;p=p||{name:'',ticker:'',kind:'etf',broker:'',units:0,avg:0,price:0,hist:[]};
-  sheet(n?'Nueva inversión':'Editar inversión',`
+  const d=sheet(n?'Nueva inversión':'Editar inversión',`
   <label>Nombre<input name="name" value="${esc(p.name)}" placeholder="Ej. MSCI World ETF"></label>
   <label>Ticker o ISIN (opcional)<input name="ticker" value="${esc(p.ticker)}"></label>
   <label>Tipo<select name="kind">${Object.entries(IK).map(([k,v])=>`<option value="${k}" ${k===p.kind?'selected':''}>${v}</option>`).join('')}</select></label>
   <label>Broker o entidad<input name="broker" value="${esc(p.broker)}"></label>
+  <label>Moneda del activo<select name="cur">${FXC.map(c=>`<option ${c===(p.cur||'EUR')?'selected':''}>${c}</option>`).join('')}</select></label>
+  <label id="fxl">Tipo de cambio: 1 € = ? <span id="fxc"></span><input name="fx" inputmode="decimal"></label>
   <label>Nº de participaciones<input name="units" inputmode="decimal" value="${p.units||''}"></label>
-  <label>Precio medio de compra (€)<input name="avg" inputmode="decimal" value="${p.avg||''}"></label>
-  <label>Precio actual (€)<input name="price" inputmode="decimal" value="${p.price||''}"></label>`,
+  <label>Precio medio de compra (en la moneda del activo)<input name="avg" inputmode="decimal" value="${p.avg||''}"></label>
+  <label>Precio actual (en la moneda del activo)<input name="price" inputmode="decimal" value="${p.price||''}"></label>`,
   d=>{const nm=V(d,'name').trim();if(!nm){toast('Pon un nombre');return false}
-    const u=flt(V(d,'units')),pr=flt(V(d,'price')),ch=n||u!==p.units||pr!==p.price;
-    Object.assign(p,{name:nm,ticker:V(d,'ticker').trim(),kind:V(d,'kind'),broker:V(d,'broker').trim(),units:u,avg:flt(V(d,'avg')),price:pr});
+    const cu=V(d,'cur')||'EUR',fxv=flt(V(d,'fx'));if(cu!=='EUR'&&fxv<=0){toast('Indica el tipo de cambio de '+cu);return false}if(cu!=='EUR')setFx(cu,fxv);
+    const u=flt(V(d,'units')),pr=flt(V(d,'price')),ch=n||u!==p.units||pr!==p.price||(p.cur||'EUR')!==cu;
+    Object.assign(p,{name:nm,ticker:V(d,'ticker').trim(),kind:V(d,'kind'),broker:V(d,'broker').trim(),units:u,avg:flt(V(d,'avg')),price:pr,cur:cu});
     if(n){p.id=uid();S.inv.push(p)}if(ch)hist(p);P(put('inv',p))},
   n?null:()=>{S.inv=S.inv.filter(x=>x!==p);P(del('inv',p.id))});
+  const ux=()=>{const c=V(d,'cur');d.querySelector('#fxl').style.display=c==='EUR'?'none':'';d.querySelector('#fxc').textContent=c;d.querySelector('[name=fx]').value=(S.meta.fx||{})[c]||''};
+  d.querySelector('[name=cur]').onchange=ux;ux();
 }
+let iv='a';
+function invDist(){
+  const k={a:p=>p.name,t:p=>IK[p.kind],b:p=>p.broker||'Sin broker',c:p=>p.cur||'EUR'}[iv],g={};
+  S.inv.forEach(p=>{const n=k(p);g[n]=(g[n]||0)+pv(p)});
+  const tb=Object.entries({a:'Activo',t:'Tipo',b:'Broker',c:'Moneda'}).map(([x,l])=>`<button class="b2" style="padding:8px;font-size:13px;${x===iv?'background:var(--a);color:var(--on)':''}" onclick="iv='${x}';render()">${l}</button>`).join('');
+  return `<div class="acts" style="margin:0 0 6px">${tb}</div>${donut(Object.entries(g).map(([n,v])=>[esc(n),v]).sort((a,b)=>b[1]-a[1]))}`}
+function rentCard(){
+  const tv=invTotal(),tc=S.inv.reduce((s,p)=>s+pc(p),0),la=tv-tc,L=S.inv.flatMap(p=>p.log||[]),re=L.reduce((s,o)=>s+(o.realized||0),0),dv=L.reduce((s,o)=>s+(o.kind==='div'?o.amount:0),0),tot=la+re+dv;
+  const c=x=>x>=0?'pos':'neg',sg=x=>(x>=0?'+':'')+eur(x);
+  return `<div class="card"><div class="li"><div>Valor actual</div><div>${eur(tv)}</div></div><div class="li"><div>Coste de lo que tienes</div><div>${eur(tc)}</div></div><div class="li"><div>Plusvalía latente</div><div class="${c(la)}">${sg(la)}${tc?' · '+(la>=0?'+':'')+pct(la/tc):''}</div></div><div class="li"><div>Plusvalía realizada (ventas)</div><div class="${c(re)}">${sg(re)}</div></div><div class="li"><div>Dividendos cobrados</div><div class="${c(dv)}">${sg(dv)}</div></div><div class="li"><div><b>Total ganado</b></div><div class="${c(tot)}"><b>${sg(tot)}${tc?' · '+(tot>=0?'+':'')+pct(tot/tc):''}</b></div></div></div><div class="sub">Las divisas se convierten con el tipo de cambio actual: el efecto del cambio de moneda desde la compra no se refleja.</div>`}
 function pricesForm(){
   if(!S.inv.length)return toast('Añade primero una inversión');
-  sheet('Actualizar precios (€ por participación)',S.inv.map((p,i)=>`<label>${esc(p.name)}<input name="p${i}" inputmode="decimal" value="${p.price||''}"></label>`).join(''),
-  d=>{S.inv.forEach((p,i)=>{const v=flt(V(d,'p'+i));if(v>0&&v!==p.price){p.price=v;hist(p);P(put('inv',p))}})});
+  const cs=[...new Set(S.inv.map(p=>p.cur).filter(c=>c&&c!=='EUR'))];
+  sheet('Actualizar precios',cs.map(c=>`<label>Tipo de cambio: 1 € = ? ${c}<input name="fx_${c}" inputmode="decimal" value="${(S.meta.fx||{})[c]||''}"></label>`).join('')+S.inv.map((p,i)=>`<label>${esc(p.name)} (${p.cur||'EUR'} por participación)<input name="p${i}" inputmode="decimal" value="${p.price||''}"></label>`).join(''),
+  d=>{cs.forEach(c=>{const r=flt(V(d,'fx_'+c));if(r>0)setFx(c,r)});S.inv.forEach((p,i)=>{const v=flt(V(d,'p'+i));if(v>0&&v!==p.price){p.price=v;hist(p);P(put('inv',p))}})});
 }
 const OPK={buy:'Compra',sell:'Venta',div:'Dividendo'};
 /* Compra: nuevo precio medio ponderado (incluye comisiones). Venta: el precio medio no cambia. */
@@ -237,8 +258,8 @@ function opForm(p0){
   <label>Operación<select name="k"><option value="buy">Compra</option><option value="sell">Venta</option><option value="div">Dividendo</option></select></label>
   <label>Fecha<input type="date" name="date" value="${today()}"></label>
   <div id="ou"><label>Nº de participaciones<input name="u" inputmode="decimal"></label>
-  <label>Precio por participación (€)<input name="pr" inputmode="decimal"></label>
-  <label>Comisiones (€)<input name="fee" inputmode="decimal"></label></div>
+  <label>Precio por participación (moneda del activo)<input name="pr" inputmode="decimal"></label>
+  <label>Comisiones (moneda del activo)<input name="fee" inputmode="decimal"></label></div>
   <label id="od" style="display:none">Importe del dividendo (€)<input name="dv" inputmode="decimal"></label>
   <label>Cuenta del broker (efectivo)<select name="ac"><option value="">Sin cuenta (no mover efectivo)</option>${accOpts(bk)}</select></label>
   <div class="warn" id="oi"></div>`,
@@ -249,17 +270,17 @@ function opForm(p0){
       if(ac)addTx({...b,id:uid(),type:'income',accountId:ac,amount:v,categoryId:S.cats.find(c=>c.name==='Dividendos'&&c.kind==='income')?.id||null})}
     else{if(un<=0||pr<=0){toast('Pon participaciones y precio');return false}
       if(k==='sell'&&un>p.units+1e-9){toast('No tienes tantas participaciones');return false}
-      const tot=Math.round((un*pr+(k==='buy'?fe:-fe))*100);Object.assign(lg,{units:un,price:pr,fees:fe,total:tot});
+      const tot=Math.round(toE(p,un*pr+(k==='buy'?fe:-fe))*100);Object.assign(lg,{units:un,price:pr,fees:fe,total:tot,cur:p.cur||'EUR'});
       if(k==='buy'){p.avg=(p.units*p.avg+un*pr+fe)/(p.units+un);p.units+=un}
-      else{lg.realized=Math.round((un*(pr-p.avg)-fe)*100);p.units=Math.max(0,p.units-un)}
+      else{lg.realized=Math.round(toE(p,un*(pr-p.avg)-fe)*100);p.units=Math.max(0,p.units-un)}
       p.units=Math.round(p.units*1e10)/1e10;lg.avgAfter=p.avg;lg.unitsAfter=p.units;
       const last=(p.hist||[]).at(-1)?.d||'';if(dt>=last){p.price=pr;hist(p,dt)}
       if(ac)addTx({...b,id:uid(),type:'invest',accountId:ac,amount:k==='buy'?-tot:tot})}
     (p.log=p.log||[]).push(lg);P(put('inv',p))});
   const u=()=>{const p=S.inv.find(x=>x.id===V(d,'p')),k=V(d,'k'),un=flt(V(d,'u')),pr=flt(V(d,'pr')),fe=flt(V(d,'fee'));
     d.querySelector('#ou').style.display=k==='div'?'none':'';d.querySelector('#od').style.display=k==='div'?'':'none';let t='';
-    if(k==='buy'&&un>0){const tot=un*pr+fe,nu=p.units+un;t=`Total ${eur(Math.round(tot*100))} · participaciones: ${num(nu)} · nuevo precio medio: ${num((p.units*p.avg+tot)/nu)} €`}
-    else if(k==='sell'&&un>0)t=`Cobras ${eur(Math.round((un*pr-fe)*100))} · plusvalía ${eur(Math.round((un*(pr-p.avg)-fe)*100))}`;
+    if(k==='buy'&&un>0){const tot=un*pr+fe,nu=p.units+un;t=`Total ${eur(Math.round(toE(p,tot)*100))}${p.cur&&p.cur!=='EUR'?' ('+num(tot,2)+' '+p.cur+')':''} · participaciones: ${num(nu)} · nuevo precio medio: ${num((p.units*p.avg+tot)/nu)} ${p.cur||'EUR'}`}
+    else if(k==='sell'&&un>0)t=`Cobras ${eur(Math.round(toE(p,un*pr-fe)*100))} · plusvalía ${eur(Math.round(toE(p,un*(pr-p.avg)-fe)*100))}`;
     d.querySelector('#oi').textContent=t||'Rellena la operación para ver el precio medio resultante'};
   d.oninput=u;d.onchange=u;u();
 }
@@ -275,16 +296,16 @@ function opsCard(){
   const ops=S.inv.flatMap(p=>(p.log||[]).map(l=>({...l,p}))).sort((a,b)=>b.date.localeCompare(a.date));if(!ops.length)return'';
   const sm=k=>ops.filter(o=>o.kind===k).reduce((s,o)=>s+(k==='div'?o.amount:o.total),0),re=ops.reduce((s,o)=>s+(o.realized||0),0);
   return `<h2>Operaciones</h2><div class="card"><div class="li"><div>Total comprado</div><div>${eur(sm('buy'))}</div></div><div class="li"><div>Total vendido</div><div>${eur(sm('sell'))}</div></div><div class="li"><div>Dividendos cobrados</div><div>${eur(sm('div'))}</div></div><div class="li"><div>Plusvalía realizada</div><div class="${re>=0?'pos':'neg'}">${re>=0?'+':''}${eur(re)}</div></div></div>
-  <div class="card">${ops.slice(0,20).map(o=>`<div class="li" onclick="undoOp('${o.p.id}','${o.id}')"><div>${OPK[o.kind]} · ${esc(o.p.name)}<small>${fd(o.date)}${o.kind==='div'?'':` · ${num(o.units)} × ${num(o.price)} €${o.fees?' · comisión '+num(o.fees,2)+' €':''}${o.kind==='buy'?' · precio medio '+num(o.avgAfter)+' €':''}`}</small></div><div>${eur(o.kind==='div'?o.amount:o.total)}${o.kind==='sell'?`<small class="${o.realized>=0?'pos':'neg'}">${o.realized>=0?'+':''}${eur(o.realized)}</small>`:''}</div></div>`).join('')}</div><div class="sub">Toca una operación para deshacerla (solo la última de cada activo).</div>`;
+  <div class="card">${ops.slice(0,20).map(o=>`<div class="li" onclick="undoOp('${o.p.id}','${o.id}')"><div>${OPK[o.kind]} · ${esc(o.p.name)}<small>${fd(o.date)}${o.kind==='div'?'':` · ${num(o.units)} × ${num(o.price)} ${o.cur||'EUR'}${o.fees?' · comisión '+num(o.fees,2)+' '+(o.cur||'EUR'):''}${o.kind==='buy'?' · precio medio '+num(o.avgAfter)+' '+(o.cur||'EUR'):''}`}</small></div><div>${eur(o.kind==='div'?o.amount:o.total)}${o.kind==='sell'?`<small class="${o.realized>=0?'pos':'neg'}">${o.realized>=0?'+':''}${eur(o.realized)}</small>`:''}</div></div>`).join('')}</div><div class="sub">Toca una operación para deshacerla (solo la última de cada activo).</div>`;
 }
 function vInv(){
   const tv=invTotal(),tc=S.inv.reduce((s,p)=>s+pc(p),0),g=tv-tc;
-  const row=p=>{const v=pv(p),gp=v-pc(p);return `<div class="li" onclick="invForm(S.inv.find(x=>x.id=='${p.id}'))"><div>${esc(p.name)}<small>${num(p.units)} × ${num(p.price)} € · ${IK[p.kind]}${p.broker?' · '+esc(p.broker):''} · ${pct(tv?v/tv:0)}</small></div><div>${eur(v)}${pc(p)?`<small class="${gp>=0?'pos':'neg'}">${gp>=0?'+':''}${pct(gp/pc(p))} · ${gp>=0?'+':''}${eur(gp)}</small>`:''}</div></div>`};
-  return `<div class="sub" style="margin-top:8px">Valor de la cartera</div><div class="big">${eur(tv)}</div>
+  const row=p=>{const v=pv(p),gp=v-pc(p);return `<div class="li" onclick="invForm(S.inv.find(x=>x.id=='${p.id}'))"><div>${esc(p.name)}<small>${num(p.units)} × ${num(p.price)} ${p.cur||'EUR'} · ${IK[p.kind]}${p.broker?' · '+esc(p.broker):''} · ${pct(tv?v/tv:0)}</small></div><div>${eur(v)}${pc(p)?`<small class="${gp>=0?'pos':'neg'}">${gp>=0?'+':''}${pct(gp/pc(p))} · ${gp>=0?'+':''}${eur(gp)}</small>`:''}</div></div>`};
+  return `<div class="sub" style="margin-top:8px">Valor de la cartera</div><div class="big">${eur(tv)}</div>${fxWarn()}
   ${tc?`<div class="sub ${g>=0?'pos':'neg'}">${g>=0?'+':''}${eur(g)} (${pct(g/tc)}) sobre lo invertido</div>`:''}
   <div class="acts"><button class="b" onclick="opForm()">Compra / venta</button><button class="b2" onclick="invForm()">+ Activo</button></div><div class="acts" style="margin-top:0"><button class="b2" onclick="pricesForm()">Actualizar precios</button></div>
-  ${S.inv.length?`<h2>Distribución de la cartera</h2><div class="card" style="padding:12px 14px">${donut(S.inv.map(p=>[esc(p.name),pv(p)]).sort((a,b)=>b[1]-a[1]))}</div>
-  <h2>Evolución de la inversión total</h2><div class="card" style="padding:12px 14px">${chart(invSeries())}</div>
+  ${S.inv.length?`<h2>Distribución de la cartera</h2><div class="card" style="padding:12px 14px">${invDist()}</div>
+  <h2>Rentabilidad</h2>${rentCard()}<h2>Evolución de la inversión total</h2><div class="card" style="padding:12px 14px">${chart(invSeries())}</div>
   <h2>Posiciones</h2><div class="card">${S.inv.map(row).join('')}</div>${opsCard()}`:'<div class="empty">Añade tus acciones, ETFs y fondos con su nº de participaciones y precio medio.</div>'}`;
 }
 
@@ -540,14 +561,14 @@ async function setPin(){
 function dl(name,type,text){const f=new File([text],name,{type});
   if(navigator.canShare&&navigator.canShare({files:[f]}))navigator.share({files:[f]}).catch(()=>{});
   else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;a.click()}}
-function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv,rules:S.rules,rec:S.rec,bud:S.bud}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
+function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),accounts:S.accounts,tx:S.tx,cats:S.cats,snaps:S.snaps,inv:S.inv,rules:S.rules,rec:S.rec,bud:S.bud,fx:S.meta.fx||{}}));S.meta.lastBackup=new Date().toISOString();saveMeta()}
 function expCSV(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const rows=[['fecha','cuenta','tipo','importe','categoria','comercio','descripcion'].join(';'),...[...S.tx].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,q(an(t.accountId)),t.type,(t.amount/100).toFixed(2).replace('.',','),q(t.categoryId?catName(t.categoryId):''),q(t.merchant),q(t.note)].join(';'))];
   dl('movimientos-'+today()+'.csv','text/csv','\ufeff'+rows.join('\n'))}
 function imp(el){const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result);if(j.app!=='finanzas'||!Array.isArray(j.tx)||!Array.isArray(j.accounts))throw 0;
   if(!confirm('Esto reemplazará todos los datos actuales. ¿Continuar?'))return;
   for(const s of DATA){await clr(s);S[s]=j[s]||[];await putMany(s,S[s])}
-  if(!S.cats.length)seedCats();document.querySelectorAll('.ov').forEach(x=>x.remove());commit();toast('Copia restaurada')}catch(e){toast('Archivo no válido')}};r.readAsText(el.files[0])}
+  if(j.fx){S.meta.fx=j.fx;saveMeta()}if(!S.cats.length)seedCats();document.querySelectorAll('.ov').forEach(x=>x.remove());commit();toast('Copia restaurada')}catch(e){toast('Archivo no válido')}};r.readAsText(el.files[0])}
 async function wipe(){if(!confirm('¿Borrar TODOS los datos de este dispositivo? No se puede deshacer.')||!confirm('Última confirmación: se borrará todo.'))return;
   for(const s of STORES)await clr(s);location.reload()}
 function settings(){
