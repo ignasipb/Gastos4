@@ -130,12 +130,12 @@ const mnav=()=>`<div class="mn"><button onclick="shiftM(-1)">‹</button><span>$
 function txForm(t){
   if(t&&t.type==='invest')return toast('Las operaciones de inversión se gestionan en la pestaña Inversiones');
   if(!S.accounts.length)return toast('Crea primero una cuenta');
-  const n=!t,old=n?[]:legs(t);let ty=n?'expense':t.type,from=n?S.accounts.find(a=>a.active).id:t.accountId,to='',amt=n?'':Math.abs(t.amount)/100;
+  const n=!t,old=n?[]:legs(t);let ty=n?'expense':t.type,from=n?((S.meta.last&&acc(S.meta.last.acc)&&acc(S.meta.last.acc).active&&S.meta.last.acc)||S.accounts.find(a=>a.active).id):t.accountId,to='',amt=n?'':Math.abs(t.amount)/100;
   if(!n&&t.transferId){const o=old.find(x=>x.amount<0)||t,i=old.find(x=>x.amount>0)||t;from=o.accountId;to=i.accountId;amt=Math.abs(o.amount)/100}
   if(!n&&ty==='adjust')amt=t.amount/100;
   const d=sheet(n?'Nuevo movimiento':'Editar movimiento',`
-  <label>Tipo<select name="type">${[['expense','Gasto'],['income','Ingreso'],['transfer','Transferencia entre cuentas'],['adjust','Ajuste de saldo']].map(([k,l])=>`<option value="${k}" ${k===ty?'selected':''}>${l}</option>`).join('')}</select></label>
   <label>Importe (€)<input name="amount" inputmode="decimal" value="${amt}"></label>
+  <label>Tipo<select name="type">${[['expense','Gasto'],['income','Ingreso'],['transfer','Transferencia entre cuentas'],['adjust','Ajuste de saldo']].map(([k,l])=>`<option value="${k}" ${k===ty?'selected':''}>${l}</option>`).join('')}</select></label>
   <label id="fl">Cuenta<select name="account">${accOpts(from)}</select></label>
   <label id="to">Hacia<select name="to">${accOpts(to)}</select></label>
   <label id="cg">Categoría<select name="cat"></select></label>
@@ -148,10 +148,11 @@ function txForm(t){
     if(ty==='transfer'){const to=V(d,'to');if(to===ac){toast('Elige dos cuentas distintas');return false}a=Math.abs(a);const tid=uid();add=[{...b,id:uid(),type:ty,accountId:ac,amount:-a,transferId:tid},{...b,id:uid(),type:ty,accountId:to,amount:a,transferId:tid}]}
     else if(ty==='adjust')add=[{...b,id:uid(),type:ty,accountId:ac,amount:a}];
     else add=[{...b,id:uid(),type:ty,accountId:ac,amount:ty==='expense'?-Math.abs(a):Math.abs(a),categoryId:V(d,'cat')||null}];
-    old.forEach(rmTx);add.forEach(addTx)},
+    old.forEach(rmTx);add.forEach(addTx);
+    if(n&&(ty==='expense'||ty==='income')){const L=S.meta.last||{};L.acc=ac;L.cat=L.cat||{};L.cat[ty]=V(d,'cat')||null;S.meta.last=L;saveMeta()}},
   n?null:()=>old.forEach(rmTx));
-  const upd=()=>{const y=V(d,'type');d.querySelector('#to').style.display=y==='transfer'?'':'none';d.querySelector('#cg').style.display=y==='expense'||y==='income'?'':'none';d.querySelector('#fl').firstChild.textContent=y==='transfer'?'Desde':'Cuenta';d.querySelector('[name=cat]').innerHTML=catOpts(y==='income'?'income':'expense',!n&&t.categoryId)};
-  d.querySelector('[name=type]').onchange=upd;upd();
+  const upd=()=>{const y=V(d,'type');d.querySelector('#to').style.display=y==='transfer'?'':'none';d.querySelector('#cg').style.display=y==='expense'||y==='income'?'':'none';d.querySelector('#fl').firstChild.textContent=y==='transfer'?'Desde':'Cuenta';d.querySelector('[name=cat]').innerHTML=catOpts(y==='income'?'income':'expense',n?(S.meta.last&&S.meta.last.cat||{})[y==='income'?'income':'expense']:t.categoryId)};
+  d.querySelector('[name=type]').onchange=upd;upd();if(n)d.querySelector('[name=amount]').focus?.();
 }
 function vMov0(){
   const f=flows(ym),seen=new Set();
@@ -380,6 +381,47 @@ const segTabs=()=>`<div class="acts" style="margin:4px 0 0">${[['m','Movimientos
 const vPres=()=>`${mnav()}${budCard(ym)}<div class="sub">El límite de cada categoría incluye sus subcategorías. Los avisos del 80 % y del 100 % salen en Inicio.</div>`;
 function vMov(){return segTabs()+(msub==='p'?vPres():msub==='r'?vRec():vMov0())}
 
+/* ============ Informes y reconstrucción del histórico ============ */
+let rmode='m',ry=today().slice(0,4);
+const prevM=m=>{const d=new Date(m+'-01T12:00');d.setMonth(d.getMonth()-1);return d.toISOString().slice(0,7)};
+const nextM=m=>{const d=new Date(m+'-01T12:00');d.setMonth(d.getMonth()+1);return d.toISOString().slice(0,7)};
+const recMo=k=>S.rec.filter(r=>r.kind===k&&(!r.end||r.end>=today())).reduce((s,r)=>s+r.amount*({m:1,q:1/3,y:1/12,w:52/12}[r.freq]),0);
+function barChart(it){
+  const mx=Math.max(1,...it.flatMap(x=>[x.a,x.b])),w=300/it.length;
+  return `<svg viewBox="0 0 320 135" width="100%">${it.map((x,i)=>{const h1=x.a/mx*100,h2=x.b/mx*100,x0=10+i*w;return `<rect x="${(x0+w*.08).toFixed(1)}" y="${(110-h1).toFixed(1)}" width="${(w*.4).toFixed(1)}" height="${h1.toFixed(1)}" style="fill:var(--g)"/><rect x="${(x0+w*.5).toFixed(1)}" y="${(110-h2).toFixed(1)}" width="${(w*.4).toFixed(1)}" height="${h2.toFixed(1)}" style="fill:var(--a)"/><text x="${(x0+w/2).toFixed(1)}" y="126" text-anchor="middle" font-size="8" style="fill:var(--m)">${x.l}</text>`}).join('')}</svg><div class="sub"><span class="dot" style="background:var(--g)"></span>Ingresos <span class="dot" style="background:var(--a);margin-left:10px"></span>Gastos</div>`}
+function periods(){
+  if(rmode==='y'){const ys=[...new Set(S.tx.map(t=>t.date.slice(0,4)))].sort().slice(-6);return ys.length?ys:[ry]}
+  const o=[];let m=ym;for(let i=0;i<12;i++){o.unshift(m);m=prevM(m)}return o}
+function whereCard(m){
+  const y=m.length===4,pm=y?String(+m-1):prevM(m),f=flows(m),fp=flows(pm);if(!f.exp&&!fp.exp)return'';
+  const b=Object.fromEntries(spendBy(pm)),up=spendBy(m).map(([k,v])=>[k,v-(b[k]||0)]).filter(x=>x[1]>0).sort((a,c)=>c[1]-a[1]).slice(0,3),rc=Math.round(recMo('expense'));
+  return `<h2>¿Dónde se me va el dinero?</h2><div class="card" style="padding:12px 14px"><div>En ${y?m:mLabel(m)} has gastado <b>${eur(f.exp)}</b>.</div>${fp.exp?`<div class="sub">Variación respecto ${y?'al año':'al mes'} anterior: ${f.exp>=fp.exp?'+':''}${pct((f.exp-fp.exp)/fp.exp)}</div>`:''}${up.length?`<div style="margin-top:8px">Mayores aumentos:</div>${up.map(([k,v])=>`<div class="li"><div>${k}</div><div>+${eur(v)}</div></div>`).join('')}`:''}${rc&&!y?`<div class="sub" style="margin-top:8px">Gastos recurrentes: ${eur(rc)} al mes</div>`:''}</div>`}
+function vInformes(){
+  const P=rmode==='y'?ry:ym,pr=rmode==='y'?String(+ry-1):prevM(ym),f=flows(P),fp=flows(pr),d=f.exp-fp.exp;
+  const ex=S.tx.filter(t=>t.type==='expense'&&t.date.startsWith(P)),grp=kf=>{const g={};ex.forEach(t=>{const k=kf(t);g[k]=(g[k]||0)-t.amount});return Object.entries(g).sort((a,b)=>b[1]-a[1])};
+  const com=grp(t=>(t.merchant||'').trim()||'Sin comercio').slice(0,8),cu=grp(t=>an(t.accountId)).map(([k,v])=>[esc(k),v]),mx=com[0]?com[0][1]:1,per=periods();
+  const sr=per.map(p=>{const x=flows(p);return{id:p,net:x.rate==null?0:Math.round(x.rate*1000)/10}});
+  const nav=rmode==='y'?`<div class="mn"><button onclick="ry=String(+ry-1);render()">‹</button><span>${ry}</span><button onclick="ry=String(+ry+1);render()">›</button></div>`:mnav();
+  const seg=['m','y'].map(k=>`<button class="b2" style="padding:10px;font-size:13px;${k===rmode?'background:var(--a);color:var(--on)':''}" onclick="rmode='${k}';render()">${k==='m'?'Mensual':'Anual'}</button>`).join('');
+  return `<button class="b2" style="flex:none;width:auto;padding:8px 14px;font-size:13px;margin-top:6px" onclick="tab='i';render()">‹ Inicio</button><div class="acts" style="margin:8px 0 0">${seg}</div>${nav}
+  <div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div><b>Neto</b></div><div class="${f.sav>=0?'pos':'neg'}"><b>${f.sav>=0?'+':''}${eur(f.sav)}</b></div></div><div class="li"><div>Tasa de ahorro</div><div>${f.rate==null?'—':pct(f.rate)}</div></div>${fp.exp?`<div class="li"><div>Gastos vs ${rmode==='y'?'año':'mes'} anterior</div><div>${d>=0?'+':''}${eur(d)} · ${d>=0?'+':''}${pct(d/fp.exp)}</div></div>`:''}</div>
+  <h2>Ingresos y gastos</h2><div class="card" style="padding:12px 14px">${barChart(per.map(p=>{const x=flows(p);return{l:rmode==='y'?p:new Date(p+'-01T12:00').toLocaleDateString('es-ES',{month:'short'}),a:x.inc,b:x.exp}}))}</div>
+  <h2>Tasa de ahorro</h2><div class="card" style="padding:12px 14px">${chart(sr)}</div><div class="sub">Porcentaje de los ingresos que ahorras cada ${rmode==='y'?'año':'mes'}.</div>
+  ${f.exp>0?`<h2>Gasto por categoría</h2><div class="card" style="padding:12px 14px">${donut(spendBy(P))}</div><h2>Por cuenta</h2><div class="card" style="padding:12px 14px">${donut(cu)}</div><h2>Por comercio</h2><div class="card">${com.map(([k,v])=>`<div class="li" style="display:block"><div style="display:flex;justify-content:space-between"><span>${esc(k)}</span><span>${eur(v)}</span></div><div class="bar"><i style="width:${v/mx*100}%;background:var(--a)"></i></div></div>`).join('')}</div>`:'<div class="empty">Sin gastos en este periodo.</div>'}
+  ${whereCard(P)}`}
+/* Histórico estimado: saldo = apertura + movimientos hasta fin de mes; inversiones = último precio guardado */
+function rebuild(){
+  const ds=S.tx.map(t=>t.date).sort();if(!ds.length)return toast('No hay movimientos');
+  if(!confirm('Se estimará el patrimonio de los meses anteriores. Los meses con foto real no se tocan. ¿Continuar?'))return;
+  const cur=today().slice(0,7);let m=ds[0].slice(0,7),n=0;
+  while(m<cur){const e=m+'-31',g={liq:0,inv:0,oth:0,debt:0};
+    S.accounts.filter(a=>a.active).forEach(a=>{g[KINDS[a.kind][1]]+=a.opening+S.tx.reduce((s,t)=>t.accountId===a.id&&t.date<=e?s+t.amount:s,0)});
+    S.inv.forEach(p=>{const h=(p.hist||[]).filter(x=>x.d<=e).pop();if(h)g.inv+=Math.round(toE(p,h.u*h.p)*100)});
+    const o=S.snaps.find(x=>x.id===m);
+    if(!o||o.est){S.snaps=S.snaps.filter(x=>x!==o);const [yy,mm]=m.split('-').map(Number),r={id:m,date:m+'-'+String(new Date(yy,mm,0).getDate()).padStart(2,'0'),net:g.liq+g.inv+g.oth+g.debt,...g,est:true};S.snaps.push(r);P(put('snaps',r));n++}
+    m=nextM(m)}
+  commit();toast(n+' meses estimados');
+}
 /* ============ Cuentas ============ */
 function accForm(a){
   const n=!a,B=balMap();a=a||{name:'',entity:'',kind:'checking',opening:0,openingDate:today(),iban:'',notes:'',active:true,currency:'EUR'};
@@ -436,14 +478,14 @@ function vInicio(){
   ${alertsHtml()}<h2>${mLabel(m)}</h2><div class="card"><div class="li"><div>Ingresos</div><div class="pos">${eur(f.inc)}</div></div><div class="li"><div>Gastos</div><div>${eur(f.exp)}</div></div><div class="li"><div>Ahorro</div><div>${eur(f.sav)}</div></div><div class="li"><div>Tasa de ahorro</div><div>${f.rate==null?'—':(f.rate*100).toFixed(1).replace('.',',')+' %'}</div></div></div>
   <div class="sub">Las transferencias y ajustes no cuentan como ingreso ni gasto.</div>
   ${top.length?`<h2>Gasto por categoría</h2><div class="card">${top.map(([k,v])=>`<div class="li" style="display:block"><div style="display:flex;justify-content:space-between"><span>${esc(k)}</span><span>${eur(v)}</span></div><div class="bar"><i style="width:${v/mx*100}%;background:var(--a)"></i></div></div>`).join('')}</div>`:''}
-  <h2>Evolución del patrimonio</h2><div class="card" style="padding:12px 14px">${chart()}</div>`;
+  ${whereCard(m)}<div class="acts"><button class="b2" onclick="tab='r';render()">Ver informes</button></div><h2>Evolución del patrimonio</h2><div class="card" style="padding:12px 14px">${chart()}</div>`;
 }
 function vPat(){
   const w=worth(),ss=[...S.snaps].sort((a,b)=>b.id<a.id?-1:1),A=w.liq+w.inv+w.oth;
   return `<div class="sub" style="margin-top:8px">Patrimonio neto = activos − deudas</div><div class="big">${eur(w.net)}</div>${delta(w)}
   <div class="card"><div class="li"><div>Activos</div><div class="pos">${eur(A)}</div></div><div class="li"><div>Deudas</div><div class="neg">${eur(-w.debt)}</div></div></div>
-  ${dist(w)}${brk(w)}<h2>Evolución</h2><div class="card" style="padding:12px 14px">${chart()}</div>
-  ${ss.length?`<h2>Foto mensual</h2><div class="card">${ss.map(s=>`<div class="li"><div>${mLabel(s.id)}</div><div>${eur(s.net)}</div></div>`).join('')}</div>`:''}`;
+  ${dist(w)}${brk(w)}<h2>Evolución</h2><div class="card" style="padding:12px 14px">${chart()}</div><div class="acts"><button class="b2" onclick="rebuild()">Reconstruir histórico</button></div><div class="sub">Estima los meses anteriores a partir de tus movimientos y precios guardados.</div>
+  ${ss.length?`<h2>Foto mensual</h2><div class="card">${ss.map(s=>`<div class="li"><div>${mLabel(s.id)}${s.est?' <small>estimado</small>':''}</div><div>${eur(s.net)}</div></div>`).join('')}</div>`:''}`;
 }
 
 /* ============ Categorías ============ */
@@ -571,7 +613,7 @@ function expJSON(){dl('finanzas-'+today()+'.json','application/json',JSON.string
 function expCSV(){const q=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
   const rows=[['fecha','cuenta','tipo','importe','categoria','comercio','descripcion'].join(';'),...[...S.tx].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,q(an(t.accountId)),t.type,(t.amount/100).toFixed(2).replace('.',','),q(t.categoryId?catName(t.categoryId):''),q(t.merchant),q(t.note)].join(';'))];
   dl('movimientos-'+today()+'.csv','text/csv','\ufeff'+rows.join('\n'))}
-function imp(el){const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result);if(j.app!=='finanzas'||!Array.isArray(j.tx)||!Array.isArray(j.accounts))throw 0;
+function imp(el){const r=new FileReader();r.onload=async()=>{try{let j=JSON.parse(r.result);if(j.enc){j=await askDec(j);if(!j)return}if(j.app!=='finanzas'||!Array.isArray(j.tx)||!Array.isArray(j.accounts))throw 0;
   if(!confirm('Esto reemplazará todos los datos actuales. ¿Continuar?'))return;
   for(const s of DATA){await clr(s);S[s]=j[s]||[];await putMany(s,S[s])}
   if(j.fx){S.meta.fx=j.fx;saveMeta()}if(!S.cats.length)seedCats();document.querySelectorAll('.ov').forEach(x=>x.remove());commit();toast('Copia restaurada')}catch(e){toast('Archivo no válido')}};r.readAsText(el.files[0])}
@@ -580,17 +622,29 @@ async function wipe(){if(!confirm('¿Borrar TODOS los datos de este dispositivo?
 function settings(){
   const ub=S.meta.lastBackup?new Date(S.meta.lastBackup).toLocaleDateString('es-ES'):'nunca';
   sheet('Ajustes',`<h2 style="margin-top:4px">Datos</h2><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="catsList()">Categorías</button><button class="b2" onclick="rulesList()">Reglas de importación</button></div>
-  <h2>Copia de seguridad</h2><div class="sub">Última copia: ${ub}</div><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="expJSON()">Exportar copia (JSON)</button><button class="b2" onclick="$('f').click()">Restaurar copia</button><button class="b2" onclick="expCSV()">Exportar movimientos (CSV)</button></div>
+  <h2>Copia de seguridad</h2><div class="sub">Última copia: ${ub}</div><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="expJSON()">Exportar copia (JSON, sin cifrar)</button><button class="b2" onclick="expEnc()">Exportar copia cifrada</button><button class="b2" onclick="$('f').click()">Restaurar copia</button><button class="b2" onclick="expCSV()">Exportar movimientos (CSV)</button></div>
   <h2>Seguridad</h2><div class="acts" style="flex-direction:column;margin-top:6px"><button class="b2" onclick="setPin()">Código de acceso ${S.meta.pinHash?'(activo)':'(sin activar)'}</button></div><div class="sub">El código bloquea la pantalla pero no cifra los datos.</div>
   <h2>Zona peligrosa</h2><div class="acts" style="margin-top:6px"><button class="b2 red" onclick="wipe()">Borrar todos los datos</button></div>
   <input type="file" id="f" accept=".json" hidden onchange="imp(this)">`);
 }
 
+/* ============ Copias cifradas (AES-256-GCM, clave PBKDF2) ============ */
+const b64=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode(...u.subarray(i,i+8192));return btoa(s)},ub=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+async function aesKey(pw,salt,it){const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:it,hash:'SHA-256'},k,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+async function encJSON(txt,pw){const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),key=await aesKey(pw,salt,250000),ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(txt)));return{app:'finanzas',enc:1,kdf:'PBKDF2-SHA256',iter:250000,salt:b64(salt),iv:b64(iv),data:b64(ct)}}
+async function decJSON(o,pw){const key=await aesKey(pw,ub(o.salt),o.iter),pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:ub(o.iv)},key,ub(o.data));return JSON.parse(new TextDecoder().decode(pt))}
+function expEnc(){
+  sheet('Copia cifrada',`<div class="warn">La copia se cifra con tu contraseña. <b>Si la olvidas, no hay forma de recuperarla.</b></div><label>Contraseña (mínimo 8 caracteres)<input name="p1" type="password"></label><label>Repetir contraseña<input name="p2" type="password"></label>`,
+  d=>{const p=V(d,'p1');if(p.length<8){toast('Mínimo 8 caracteres');return false}if(p!==V(d,'p2')){toast('No coinciden');return false}
+    (async()=>{const o=await encJSON(JSON.stringify({app:'finanzas',version:1,exported:new Date().toISOString(),...Object.fromEntries(DATA.map(k=>[k,S[k]])),fx:S.meta.fx||{}}),p);
+      dl('finanzas-cifrada-'+today()+'.json','application/json',JSON.stringify(o));S.meta.lastBackup=new Date().toISOString();saveMeta();d.remove();toast('Copia cifrada creada')})();return false});
+}
+function askDec(o){return new Promise(res=>{sheet('Copia cifrada',`<label>Contraseña de la copia<input name="pw" type="password"></label>`,d=>{(async()=>{try{const j=await decJSON(o,V(d,'pw'));d.remove();res(j)}catch(e){toast('Contraseña incorrecta')}})();return false})})}
 /* ============ Render e inicio ============ */
-const T={i:['Inicio',vInicio],m:['Movimientos',vMov],c:['Cuentas',vCuentas],p:['Patrimonio',vPat],v:['Inversiones',vInv]};
+const T={i:['Inicio',vInicio],m:['Movimientos',vMov],c:['Cuentas',vCuentas],p:['Patrimonio',vPat],v:['Inversiones',vInv],r:['Informes',vInformes,1]};
 function render(){
   const m=$('app'),sc=m.scrollTop;$('ttl').textContent=T[tab][0];try{m.innerHTML=T[tab][1]()}catch(e){m.innerHTML='<div class="warn">Error al mostrar esta pantalla: '+esc(e.message)+'</div>'}
-  $('nav').innerHTML=Object.entries(T).map(([k,v])=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v[0]}</button>`).join('');m.scrollTop=sc;
+  $('nav').innerHTML=Object.entries(T).filter(([k,v])=>!v[2]).map(([k,v])=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';render()">${v[0]}</button>`).join('');m.scrollTop=sc;
 }
 let hiddenAt=0;
 document.addEventListener('visibilitychange',()=>{if(document.hidden)hiddenAt=Date.now();else if(S.meta.pinHash&&Date.now()-hiddenAt>30000)showLock()});
