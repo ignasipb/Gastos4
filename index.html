@@ -422,6 +422,23 @@ function rebuild(){
     m=nextM(m)}
   commit();toast(n+' meses estimados');
 }
+
+/* Desglose de la variación del patrimonio desde la última foto del mes anterior */
+function varBreakdown(){
+  const p=[...S.snaps].filter(s=>s.id<today().slice(0,7)).sort((a,b)=>b.id<a.id?-1:1)[0];if(!p)return null;
+  const pd=p.date||p.id+'-31',w=worth(),act=t=>{const a=acc(t.accountId);return a&&a.active},T=S.tx.filter(t=>t.date>pd&&act(t));
+  const sm=f=>T.filter(f).reduce((s,t)=>s+t.amount,0),K=['income','expense','adjust','transfer'];
+  const inc=sm(t=>t.type==='income'),exp=sm(t=>t.type==='expense'),adj=sm(t=>t.type==='adjust'),trf=sm(t=>t.type==='transfer'),ivx=sm(t=>!K.includes(t.type));
+  const inv0=S.inv.reduce((s,q)=>{const h=(q.hist||[]).filter(x=>x.d<=pd).pop();return s+(h?Math.round(toE(q,h.u*h.p)*100):0)},0),aport=-ivx,rend=invTotal()-inv0-aport;
+  const d=w.net-p.net,top=T.filter(t=>t.type==='income'||t.type==='expense'||t.type==='adjust').sort((a,b)=>Math.abs(b.amount)-Math.abs(a.amount)).slice(0,6);
+  return{p:{...p,date:pd},w,d,inc,exp,adj,trf,aport,rend,otros:d-(inc+exp+adj+trf+rend),top}}
+function varDetail(){
+  const b=varBreakdown();if(!b)return toast('Aún no hay un mes anterior con el que comparar');
+  const c=x=>x>=0?'pos':'neg',sg=x=>(x>=0?'+':'')+eur(x),row=(l,v,s)=>`<div class="li"><div>${l}${s?`<small>${s}</small>`:''}</div><div class="${c(v)}">${sg(v)}</div></div>`;
+  sheet('¿De dónde sale la variación?',`<div class="sub">Desde la foto del ${b.p.date.split('-').reverse().join('/')} (${eur(b.p.net)}) hasta hoy (${eur(b.w.net)})</div><div class="big ${c(b.d)}" style="font-size:30px">${sg(b.d)}</div>
+  <div class="card">${row('Ingresos',b.inc)}${row('Gastos',b.exp)}${row('<b>Ahorro</b>',b.inc+b.exp)}${row('Ajustes manuales de saldo',b.adj,'Se crean al cambiar a mano el saldo de una cuenta')}${b.trf?row('Traspasos hacia o desde cuentas inactivas',b.trf,'Dinero que sale de las cuentas que cuentan en el patrimonio'):''}${row('Rendimiento de inversiones',b.rend,'Cambio de valor sin contar lo aportado ('+eur(b.aport)+')')}${Math.abs(b.otros)>=1?row('Otros',b.otros,'Cambio de divisa o movimientos anteriores a la foto que se han añadido o corregido después'):''}<div class="li"><div><b>Total</b></div><div class="${c(b.d)}"><b>${sg(b.d)}</b></div></div></div>
+  ${b.top.length?`<h2>Mayores movimientos del periodo</h2><div class="card">${b.top.map(t=>`<div class="li"><div>${esc(t.merchant||(t.type==='adjust'?'Ajuste de saldo':catName(t.categoryId)))}<small>${fd(t.date)} · ${esc(an(t.accountId))}</small></div><div class="${c(t.amount)}">${sg(t.amount)}</div></div>`).join('')}</div>`:''}`);
+}
 /* ============ Cuentas ============ */
 function accForm(a){
   const n=!a,B=balMap();a=a||{name:'',entity:'',kind:'checking',opening:0,openingDate:today(),iban:'',notes:'',active:true,currency:'EUR'};
@@ -462,7 +479,7 @@ function chart(s0){
 function delta(w){
   const p=[...S.snaps].filter(s=>s.id<today().slice(0,7)).sort((a,b)=>b.id<a.id?-1:1)[0];
   if(!p)return '<div class="sub">Sin mes anterior con el que comparar</div>';
-  const d=w.net-p.net;return `<div class="sub ${d>=0?'pos':'neg'}">${d>=0?'+':''}${eur(d)} respecto al mes anterior</div>`;
+  const d=w.net-p.net;return `<div class="sub ${d>=0?'pos':'neg'}">${d>=0?'+':''}${eur(d)} respecto al mes anterior</div><button class="b2" style="flex:none;width:auto;padding:6px 12px;font-size:13px;margin:6px 0" onclick="varDetail()">Ver de dónde sale</button>`;
 }
 const dist=w=>{const t=w.liq+w.inv+w.oth;if(t<=0)return'';return `<div class="bar" style="height:10px">${[['liq','var(--a)'],['inv','var(--g)'],['oth','var(--m)']].map(([k,c])=>w[k]>0?`<i style="width:${w[k]/t*100}%;background:${c}"></i>`:'').join('')}</div>`};
 const brk=w=>`<div class="card">${Object.keys(GROUPS).map(g=>`<div class="li"><div>${GROUPS[g]}</div><div class="${g==='debt'&&w.debt<0?'neg':''}">${eur(w[g])}</div></div>`).join('')}</div>`;
